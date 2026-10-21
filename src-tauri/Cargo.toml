@@ -1,0 +1,26 @@
+[package]
+name = "slotshot"
+version = "0.1.0"
+description = "A lightweight screenshot utility for macOS and Windows"
+authors = ["Slotshot contributors"]
+license = "MIT"
+repository = "https://github.com/KarabulutUmut/slotshot"
+edition = "2024"
+
+[lib]
+# Keep the library name distinct from the binary on Windows.
+name = "slotshot_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
