@@ -11,8 +11,8 @@ cloud services.
 **Task 001: foundation only.** The repository contains the desktop scaffold,
 a static placeholder UI, TypeScript checks, linting, formatting, documentation,
 and a GitHub Actions workflow for macOS and Windows. Product functionality is
-not implemented, and there are no downloadable releases. The generated app icons
-are temporary Tauri template assets, not final Slotshot branding.
+not implemented, and there are no downloadable releases. The app icons use a simple
+temporary rectangle symbol, not final Slotshot branding.
 
 The frontend is independently runnable in a browser. A native desktop build and
 launch require Rust and the platform prerequisites below. Native builds and GUI
