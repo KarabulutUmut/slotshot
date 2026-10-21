@@ -45,9 +45,12 @@ struct Snapshot {
     y: i32,
     display_width: u32,
     display_height: u32,
+    ready: bool,
 }
 
+#[derive(Debug)]
 enum Completion {
+    Ready,
     Selected { index: usize, selection: Selection },
     Cancelled,
     Failed(String),
@@ -129,12 +132,13 @@ fn snapshots() -> Result<Vec<Snapshot>, String> {
             y,
             display_width,
             display_height,
+            ready: false,
         });
     }
     Ok(result)
 }
 
-fn create_overlay(
+async fn create_overlay(
     app: &AppHandle,
     label: &str,
     x: i32,
@@ -178,12 +182,33 @@ fn create_overlay(
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        let native_window = window.clone();
+        // Run in one main-thread callback: moving processes WM_DPICHANGED before
+        // applying the final physical size. Otherwise Tao preserves logical size
+        // when crossing DPI scales and stretches an already-sized overlay.
         window
-            .set_size(tauri::PhysicalSize::new(width, height))
-            .map_err(|e| format!("Could not size selection window: {e}"))?;
-        window
-            .set_position(tauri::PhysicalPosition::new(x, y))
-            .map_err(|e| format!("Could not position selection window: {e}"))?;
+            .run_on_main_thread(move || {
+                let result = (|| {
+                    let position = tauri::PhysicalPosition::new(x, y);
+                    let size = tauri::PhysicalSize::new(width, height);
+                    native_window.set_position(position)?;
+                    native_window.set_size(size)?;
+                    if native_window.outer_position()? != position
+                        || native_window.inner_size()? != size
+                    {
+                        return Err(tauri::Error::WindowNotFound);
+                    }
+                    Ok(())
+                })();
+                let _ = sender.try_send(result);
+            })
+            .map_err(|e| format!("Could not configure selection window: {e}"))?;
+        receiver
+            .recv()
+            .await
+            .ok_or("Selection window setup was interrupted.")?
+            .map_err(|e| format!("Could not align selection window with the display: {e}"))?;
     }
     Ok(())
 }
@@ -233,12 +258,44 @@ async fn capture(app: &AppHandle, destination: Destination) -> Result<Outcome, S
         submitted: false,
     });
     for (label, x, y, width, height) in overlays {
-        create_overlay(app, &label, x, y, width, height)?;
+        create_overlay(app, &label, x, y, width, height).await?;
     }
-    let completion = receiver
-        .recv()
-        .await
-        .ok_or("Selection windows closed unexpectedly.")?;
+    let completion = await_ready(&mut receiver, std::time::Duration::from_secs(15)).await?;
+    let completion = if matches!(completion, Completion::Ready) {
+        let labels: Vec<_> = state
+            .session
+            .lock()
+            .map_err(|_| state_error())?
+            .as_ref()
+            .ok_or("Capture is no longer active.")?
+            .snapshots
+            .iter()
+            .map(|s| s.label.clone())
+            .collect();
+        for label in labels {
+            app.get_webview_window(&label)
+                .ok_or("Selection window closed unexpectedly.")?
+                .show()
+                .map_err(|e| format!("Could not display selection: {e}"))?;
+        }
+        // Focus one overlay for Escape; clicking another display transfers focus.
+        if let Some(window) = app
+            .webview_windows()
+            .into_iter()
+            .find(|(l, _)| l.starts_with("region-"))
+            .map(|(_, w)| w)
+        {
+            window
+                .set_focus()
+                .map_err(|e| format!("Could not focus selection: {e}"))?;
+        }
+        receiver
+            .recv()
+            .await
+            .ok_or("Selection windows closed unexpectedly.")?
+    } else {
+        completion
+    };
     let session = state
         .session
         .lock()
@@ -246,6 +303,7 @@ async fn capture(app: &AppHandle, destination: Destination) -> Result<Outcome, S
         .take()
         .ok_or("Capture is no longer active.")?;
     match completion {
+        Completion::Ready => Err("Selection initialized more than once. Retry capture.".into()),
         Completion::Cancelled => Ok(Outcome::Cancelled),
         Completion::Failed(message) => Err(message),
         Completion::Selected { index, selection } => {
@@ -344,18 +402,70 @@ pub fn region_snapshot(
 #[tauri::command]
 pub fn region_ready(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     let state = app.state::<CaptureState>();
-    let session = state.session.lock().map_err(|_| state_error())?;
-    if !session
-        .as_ref()
-        .is_some_and(|s| s.snapshots.iter().any(|s| s.label == window.label()))
-    {
-        return Err("This selection window is no longer active.".into());
+    let mut session = state.session.lock().map_err(|_| state_error())?;
+    let session = session.as_mut().ok_or("Capture is no longer active.")?;
+    if session.submitted {
+        return Err("Capture has already finished.".into());
     }
-    drop(session);
-    window
-        .show()
-        .and_then(|()| window.set_focus())
-        .map_err(|e| format!("Could not display selection: {e}"))
+    let snapshot = session
+        .snapshots
+        .iter_mut()
+        .find(|s| s.label == window.label())
+        .ok_or("This selection window is no longer active.")?;
+    if !snapshot.ready {
+        snapshot.ready = true;
+        if session.snapshots.iter().all(|s| s.ready) {
+            session
+                .sender
+                .try_send(Completion::Ready)
+                .map_err(|_| "Selection initialization was interrupted.")?;
+        }
+    }
+    Ok(())
+}
+
+async fn await_ready(
+    receiver: &mut tauri::async_runtime::Receiver<Completion>,
+    deadline: std::time::Duration,
+) -> Result<Completion, String> {
+    tokio::time::timeout(deadline, receiver.recv())
+        .await
+        .map_err(|_| {
+            "Selection windows did not initialize within 15 seconds. Retry capture.".to_string()
+        })?
+        .ok_or_else(|| "Selection windows closed unexpectedly.".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initialization_timeout_recovers_even_when_sender_remains_alive() {
+        tauri::async_runtime::block_on(async {
+            let (_sender, mut receiver) = tauri::async_runtime::channel(1);
+            assert!(
+                await_ready(&mut receiver, std::time::Duration::from_millis(1))
+                    .await
+                    .unwrap_err()
+                    .contains("did not initialize")
+            );
+        });
+    }
+
+    #[test]
+    fn readiness_and_early_cancellation_are_delivered_without_waiting_for_timeout() {
+        tauri::async_runtime::block_on(async {
+            for completion in [Completion::Ready, Completion::Cancelled] {
+                let (sender, mut receiver) = tauri::async_runtime::channel(1);
+                sender.try_send(completion).unwrap();
+                assert!(matches!(
+                    await_ready(&mut receiver, std::time::Duration::from_secs(1)).await,
+                    Ok(Completion::Ready | Completion::Cancelled)
+                ));
+            }
+        });
+    }
 }
 
 fn complete(

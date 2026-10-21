@@ -3765,6 +3765,7 @@ dependencies = [
  "serde",
  "tauri",
  "tauri-build",
+ "tokio",
  "xcap",
 ]
 
