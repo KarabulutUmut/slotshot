@@ -11,13 +11,13 @@
   behind platform gates when needed, and document platform-specific limitations.
 - Treat screenshots as private local data. Keep OS operations in Rust, validate
   frontend input, and grant only the Tauri permissions a feature actually uses.
-- Use npm and preserve package-lock.json. Commit Cargo.lock once Rust can generate
-  it; do not ignore it or invent a lockfile.
+- Use npm and preserve package-lock.json and src-tauri/Cargo.lock. Use `--locked`
+  for Rust checks/builds and update lockfiles only for intentional dependency changes.
 - Run `npm ci`, `npm run check`, and `npm run build`. With Rust installed, also run
   `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`,
-  `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`,
-  `cargo test --manifest-path src-tauri/Cargo.toml`, and
-  `npm run tauri -- build --debug --no-bundle`.
+  `cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings`,
+  `cargo test --manifest-path src-tauri/Cargo.toml --locked`, and
+  `npm run tauri -- build --debug --no-bundle -- --locked`.
 - Add focused tests with new behavior, particularly selection rules, persistence,
   and OS error handling. Do not add placeholder tests just to claim coverage.
 - Smoke-test relevant UI and native workflows on both platforms when possible.

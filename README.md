@@ -14,10 +14,11 @@ and a GitHub Actions workflow for macOS and Windows. Product functionality is
 not implemented, and there are no downloadable releases. The app icons use a simple
 temporary rectangle symbol, not final Slotshot branding.
 
-The frontend is independently runnable in a browser. A native desktop build and
-launch require Rust and the platform prerequisites below. Native builds and GUI
-behavior have not been verified locally because the foundation environment has
-no Rust/Cargo installation. CI configuration is not evidence of a successful run.
+The frontend is independently runnable in a browser. The native macOS window has
+been manually confirmed to launch, and the initial foundation CI run passed.
+Task 001.5 adds the generated Rust lockfile and enforces locked native checks in
+CI. A native build and launch require Rust and the platform prerequisites below.
+Windows GUI behavior, distribution packaging, and resource usage remain unverified.
 There are no behavior tests yet; tests will be introduced with product logic.
 
 ## Planned functionality
@@ -94,20 +95,20 @@ With native prerequisites installed, also run:
 
 ```sh
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri -- build --debug --no-bundle
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+npm run tauri -- build --debug --no-bundle -- --locked
 ```
 
 `cargo test` currently has no application behavior tests. The final command
 compiles a debug desktop executable without packaging or signing. For a local
-release build, use `npm run tauri -- build --no-bundle`; signed distribution
+release build, use `npm run tauri -- build --no-bundle -- --locked`; signed distribution
 and installers are future work. Build output is under `src-tauri/target/`.
 
-`package-lock.json` is committed for reproducible npm installs. Cargo.lock is
-not yet generated because Rust is absent in the foundation environment. Generate
-and commit it on the first Rust-enabled checkout, then use `--locked` for native
-CI checks. Do not handwrite it. Initial CI resolves Rust dependencies normally.
+`package-lock.json` and `src-tauri/Cargo.lock` pin npm and Rust dependencies.
+Use `npm ci` and `--locked` for native checks/builds so validation cannot silently
+change dependency resolution. Regenerate lockfiles only for intentional dependency
+updates; do not handwrite them.
 
 The [CI workflow](.github/workflows/ci.yml) runs on pushes, pull requests, and manual
 dispatches. Both macOS and Windows jobs check frontend code, Rust formatting,
@@ -118,7 +119,8 @@ workflows, publish a release, or install an app on your machine.
 ## Roadmap
 
 1. **Foundation (Task 001):** scaffold, placeholder, documentation, developer
-   checks, and CI configuration. Native build/launch validation remains pending.
+   checks, and CI configuration. Task 001.5 validates the existing foundation and
+   commits the native dependency lockfile; macOS launch has been manually confirmed.
 2. **Capture validation:** test OS permissions, region selection, scaling, and
    single-image clipboard/save behavior on macOS and Windows.
 3. **Visual clipboard:** define image lifecycle, implement 1–10 slots, thumbnails,
@@ -129,7 +131,8 @@ workflows, publish a release, or install an app on your machine.
    measure idle resources, test real workflows on both OSes, and prepare signed
    releases once ready.
 
-Only Task 001 is in scope for the initial foundation.
+Only Tasks 001 and 001.5 are in scope for the foundation. Product features remain
+planned.
 
 ## Contributing and license
 
