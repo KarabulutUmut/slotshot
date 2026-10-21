@@ -46,3 +46,79 @@ section p {
   color: #555e6c;
   font-size: 14px;
 }
+
+button {
+  padding: 10px 16px;
+  border: 1px solid #566477;
+  border-radius: 6px;
+  color: #20242a;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+button:focus-visible {
+  outline: 3px solid #087bbf;
+  outline-offset: 3px;
+}
+.capture-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+[role="status"] {
+  overflow-wrap: anywhere;
+}
+
+body:has(.region-overlay) {
+  min-width: 0;
+  overflow: hidden;
+}
+.region-overlay {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #111;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+.region-snapshot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.region-shade {
+  position: absolute;
+  inset: 0;
+  background: #0006;
+  pointer-events: none;
+}
+.region-boundary {
+  position: absolute;
+  border: 2px solid #fff;
+  outline: 1px solid #111;
+  box-shadow: 0 0 0 100000px #0006;
+  pointer-events: none;
+}
+.region-instructions {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  max-width: calc(100% - 140px);
+  padding: 10px 14px;
+  border-radius: 6px;
+  color: #fff;
+  background: #161b24;
+  pointer-events: none;
+}
+.region-cancel {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+}

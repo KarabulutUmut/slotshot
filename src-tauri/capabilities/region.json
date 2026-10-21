@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "region",
+  "description": "Selection windows can read their own snapshot and finish or cancel the active capture",
+  "windows": ["region-*"],
+  "permissions": [
+    "allow-region-snapshot",
+    "allow-region-ready",
+    "allow-finish-region",
+    "allow-cancel-region"
+  ]
+}

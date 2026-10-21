@@ -2,9 +2,16 @@
 
 ## Status and scope
 
-Task 001 provides only the application foundation and a placeholder screen.
-Every workflow and feature below is planned, not implemented. Target platforms
-are macOS and Windows; exact minimum OS versions require native validation.
+Task 002 implements region capture through two test buttons in the existing window.
+Drag a rectangle on any connected display, then copy an actual image or save a PNG
+to Pictures. Escape cancels without exporting. The overlay shows a frozen snapshot
+and is never included in the captured image. A region stays on the display where
+the drag starts; cross-display stitching is deferred. Errors return to the main
+window with a retryable message. No screenshots are retained between captures.
+
+The remaining requirements and shortcut/slot workflows below are planned. Target
+platforms are macOS and Windows; exact minimum OS versions require native validation.
+See [capture validation and limitations](CAPTURE.md).
 
 Slotshot is a lightweight, open-source region screenshot utility with a visual
 screenshot clipboard. It runs locally without accounts, a server, a database,
@@ -12,7 +19,6 @@ analytics, or cloud services.
 
 ## Planned requirements
 
-- Capture a user-selected screen region and copy the image or save it to disk.
 - Offer a visual clipboard with a configurable total of 1–10 screenshot slots.
   Each occupied slot shows a thumbnail; users can assign, replace, and delete it.
 - Select one thumbnail, a contiguous range, or multiple individual thumbnails.
@@ -51,9 +57,8 @@ behavior on macOS and Windows with representative receiving apps before promisin
 multi-image paste. Do not silently substitute a collage, file list, or sequential
 clipboard writes. Decide and document any fallback separately.
 
-## Out of scope for Task 001
+## Out of scope for Task 002
 
-Screen capture, slot state, selection logic, hotkeys, clipboard access, saved
-settings, native permission requests, background/tray behavior, installers for
-distribution, signing, and automatic updates. The initial window is resizable,
-but the screenshot picker itself does not exist yet.
+Screenshot slots, thumbnail selection, hotkeys, settings, annotations, image editing,
+background/tray behavior, distribution installers, signing, and automatic updates.
+The main window remains a development placeholder; there is no final picker UI.
