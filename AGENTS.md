@@ -24,3 +24,32 @@
   Report missing prerequisites and unverified behavior honestly.
 - Update docs when scope or setup changes. Use conventional commits, preserve
   existing work and remotes, and never commit generated output or private data.
+
+## No automatic code review
+
+- Never invoke `requesting-code-review` or similar code-review skills unless the
+  user explicitly requests them.
+- Never launch independent review agents, automated review workflows, or review
+  integrations unless the user explicitly requests them. Do not add external
+  review as a default phase of any task.
+- Normal implementation, self-checking, testing, linting, and build validation
+  remain expected.
+
+## No waiting for GitHub CI
+
+- Run relevant local checks before committing. Push changes and create or update
+  a PR when the task requires it.
+- Check the initial GitHub Actions status at most once. Do not poll, repeatedly
+  check, or wait for CI to finish.
+- If CI is still pending, report that and finish the task. Clearly report any
+  already-known failure; never claim pending checks passed.
+- Do not merge while required checks are pending or failing.
+
+## Task completion
+
+- Stop when the requested scope is complete. Do not start additional work or
+  launch unnecessary background processes.
+- Finish with a concise summary of changes, tests, Git status, PR link, and any
+  remaining work.
+- Keep the workflow lightweight and appropriate for a small solo-developed
+  application.
