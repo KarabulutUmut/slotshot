@@ -8,22 +8,22 @@ cloud services.
 
 ## Development status
 
-**Task 001: foundation only.** The repository contains the desktop scaffold,
-a static placeholder UI, TypeScript checks, linting, formatting, documentation,
-and a GitHub Actions workflow for macOS and Windows. Product functionality is
-not implemented, and there are no downloadable releases. The app icons use a simple
-temporary rectangle symbol, not final Slotshot branding.
+**Task 002: native region capture.** The desktop app offers **Copy Region** and
+**Save Region** test buttons. Drag a rectangle on any connected display; Escape
+cancels. Copy writes an actual image to the system clipboard. Save exports a PNG
+to your Pictures folder without overwriting existing files. Regions stay on one
+display; cross-display stitching is not implemented.
 
-The frontend is independently runnable in a browser. The native macOS window has
-been manually confirmed to launch, and the initial foundation CI run passed.
-Task 001.5 adds the generated Rust lockfile and enforces locked native checks in
-CI. A native build and launch require Rust and the platform prerequisites below.
-Windows GUI behavior, distribution packaging, and resource usage remain unverified.
-There are no behavior tests yet; tests will be introduced with product logic.
+The selection shows a frozen snapshot taken before the overlay opens. Screenshots
+stay in memory until completion or cancellation; only Save writes an image file.
+macOS requires Screen Recording permission. Slots, hotkeys, settings, and the final
+picker UI remain planned. There are no downloadable releases.
+
+See [capture design, limitations, and manual test instructions](docs/CAPTURE.md).
+Windows CI compilation does not establish Windows runtime behavior.
 
 ## Planned functionality
 
-- Region screenshots copied to the system clipboard or saved to disk.
 - A visual clipboard with 1–10 slots and thumbnail previews.
 - Assign, replace, delete, and select images, including range and multi-selection.
 - Configurable global hotkeys and default save location.
@@ -51,7 +51,7 @@ for planned workflows, technical boundaries, and open questions.
 Follow the official [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/)
 for installation and platform details. These tools can be substantial downloads
 and are not installed by this repository. Minimum supported OS versions will be
-confirmed when native capture APIs are selected and validated. Linux and mobile
+confirmed through native runtime validation; capture APIs are now selected. Linux and mobile
 are outside the current product scope.
 
 ## Install and develop
@@ -68,14 +68,15 @@ opens the native desktop window. The initial Rust build downloads and compiles
 native dependencies and may take several minutes. Missing `cargo` or `rustc`
 means Rust must be installed and available on your terminal's PATH.
 
-For the **frontend placeholder only**, without Rust:
+For the **frontend preview only**, without Rust:
 
 ```sh
 npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:1420`. This browser preview does not validate native APIs.
+Open `http://127.0.0.1:1420`. Capture buttons are disabled in a browser; this
+preview does not validate native APIs.
 Vite binds to loopback and uses a fixed port; stop another process using port
 1420 before starting it. There is no production web server.
 
@@ -100,7 +101,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm run tauri -- build --debug --no-bundle -- --locked
 ```
 
-`cargo test` currently has no application behavior tests. The final command
+`cargo test` covers coordinate validation, PNG roundtrips, filename collisions,
+save errors, and overlay initialization recovery. The final command
 compiles a debug desktop executable without packaging or signing. For a local
 release build, use `npm run tauri -- build --no-bundle -- --locked`; signed distribution
 and installers are future work. Build output is under `src-tauri/target/`.
@@ -131,8 +133,8 @@ workflows, publish a release, or install an app on your machine.
    measure idle resources, test real workflows on both OSes, and prepare signed
    releases once ready.
 
-Only Tasks 001 and 001.5 are in scope for the foundation. Product features remain
-planned.
+Task 002 implements single-region copy/save only. Screenshot slots and shortcuts
+remain planned.
 
 ## Contributing and license
 
