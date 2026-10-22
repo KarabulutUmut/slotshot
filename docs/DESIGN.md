@@ -1,39 +1,32 @@
-# Approved picker design — Template 1
+# Picker design — Template 1
 
-## Reference and status
+The [Slotshot Mac Utility Showcase](design/Slotshot%20Mac%20Utility%20Showcase.png)
+is the approved visual reference, preserved unchanged. The application implements
+the picker itself, not the surrounding marketing poster.
 
-The existing [Slotshot Mac Utility Showcase](design/Slotshot%20Mac%20Utility%20Showcase.png)
-is the approved Template 1 visual reference. Task 003A adds the previously
-untracked, user-provided PNG unchanged; no replacement mockup is generated.
-The current Task 002 window is a capture test launcher, not this picker.
+Keep the compact dark translucent floating surface, rounded thumbnails, restrained
+borders/spacing, numbered slots, blue selection, and fully resizable native window.
+The grid adapts to 1–10 slots and wraps in narrow windows. macOS uses HUD vibrancy;
+Windows requests Acrylic. OS window chrome, transparency settings, and material
+support differ; keep the same CSS surface and document observed differences.
 
-Preserve the reference's compact, dark, elegant, translucent macOS-style floating
-window, screenshot thumbnails, numbered slots, blue selection highlights, rounded
-surfaces, and restrained toolbar. The window must be fully resizable. Maintain
-visual consistency on macOS and Windows; validate transparency/window behavior on
-each platform and document limitations without introducing a new design.
+Written [product rules](PRODUCT.md) supersede obsolete reference interactions:
 
-## Approved interaction changes
+- Header: Store in Slot, Save to Device, and Settings. First-run settings offers
+  Pictures or another export folder. Settings also chooses 1–10 slots.
+- Bottom toolbar: **Save** and **Clear** only. Native file drag-out is primary;
+  no Copy/Paste controls or paste shortcuts.
+- Click selects; Shift selects a contiguous range; Cmd (macOS) / Ctrl (Windows)
+  toggles individuals. Dragging a selected occupied thumbnail preserves the group
+  and offers selected occupied PNGs together, with source-preserving copy semantics.
+- Empty numbered slots show a restrained plus/empty label. Select one and use
+  Store in Slot to populate it. No thumbnail context menus or reordering.
+- Visible focus, descriptive button labels, Tab, arrows/Home/End, and Space/Enter
+  support keyboard use. Confirmation dialogs handle Escape/cancellation and keep
+  destructive actions explicit. Counts/revisions are also validated in Rust.
+- Status text reports capture, export, drag, and filesystem errors. Reload retries
+  metadata loading and obsolete-file cleanup. Cleanup warnings remain visible.
 
-The written [product requirements](PRODUCT.md) supersede outdated interaction
-labels in the reference image:
-
-- Remove its Copy/Paste controls and paste-shortcut instructions. The final
-  capture destinations are Store in Slot and Save to Device.
-- Keep Save and Clear. Save Selected exports selected occupied slots as separate
-  PNGs. Native drag-out is the primary way to transfer images to another app.
-- Select one slot, Shift for ranges, Cmd (macOS) / Ctrl (Windows) for individual
-  selection. Dragging an already selected thumbnail keeps the group selected and
-  offers all selected PNG files in one native drag that preserves source files.
-- No right-click/context menus on thumbnails, including the contextual action
-  panel illustrated in the multiple-selection section. Keep actions in the toolbar.
-- The image's “Drag to reorder” wording does not define the approved drag-out
-  behavior or require implementing reordering. Do not confuse reordering with
-  transferring PNG files to another application.
-- Show empty numbered slots up to the configured count (1–10, default 5). Confirm
-  count reductions that affect occupied slots; no hidden retained screenshots.
-
-Provide visible selection and keyboard access. Use thumbnails for previews and
-event-driven updates to keep idle overhead low. Native drag compatibility, full
-resizing, and platform visual behavior need runtime testing; the image is not
-evidence that these features are implemented.
+Native fidelity and cross-platform behavior require runtime validation; neither
+the reference image nor a successful build establishes receiving-app compatibility.
+Global shortcuts and tray/background operation remain outside Task 003B.

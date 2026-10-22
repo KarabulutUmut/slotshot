@@ -1,176 +1,146 @@
 # Architecture
 
-## Status and boundaries
+One React/TypeScript frontend with plain CSS and local UI state; one Rust/Tauri 2
+backend owns capture, trusted paths, persistence, exports, native dialogs, and drag.
+No server, database, application network client, accounts, analytics, or cloud.
 
-Task 002's native region capture is implemented. Task 003A aligns documentation
-only; all sections marked planned describe the approved target for subsequent
-implementation, not existing capabilities. Keep one small React/TypeScript
-frontend with plain CSS/local state and a Rust/Tauri 2 backend. No server,
-accounts, database, analytics, application network client, or cloud storage.
+## Code and command boundaries
 
-## Current application (Task 002)
+- `src/App.tsx`: primary picker, setup/settings, confirmations, and action results.
+  `selection.ts` holds tested click/range/toggle rules. React retains metadata and
+  bounded thumbnail Blob URLs, never every full-resolution PNG. URLs are revoked.
+- `capture.rs` / `RegionOverlay.tsx`: on-demand frozen snapshots and temporary
+  selection webviews; `region.rs` validates normalized coordinates/pixel conversion.
+- `storage.rs`: versioned metadata, immutable PNG generations, thumbnails,
+  settings, cleanup/recovery, collision-safe exports, and input/path validation.
+- `slots.rs`: window-restricted commands, blocking filesystem workers, native
+  directory dialog, native drag, and shared operation guard.
+- `export.rs`: PNG encoding and `create_new` exports, including partial-file cleanup.
 
-- `src/`: `App.tsx` is the Copy Region/Save Region test launcher;
-  `RegionOverlay.tsx` is the temporary drag surface; `capture.ts` defines typed
-  commands/results. Browser preview disables native buttons.
-- `src-tauri/src/capture.rs`: on-demand snapshots, macOS permission checks,
-  temporary selection windows, capture lifecycle, and arboard native image
-  clipboard writes. The legacy clipboard implementation has not been removed.
-- `region.rs`: pure, tested normalized-coordinate validation/pixel conversion.
-- `export.rs`: PNG encoding and collision-safe exports to Pictures; `create_new`
-  avoids overwrites, and failed write/sync attempts remove incomplete exports.
-- Screenshots stay in capture-session memory except for explicit Pictures exports
-  and the OS clipboard. No slot persistence, settings, thumbnails, native file
-  drag-out, or final picker is implemented. Node/Vite are development tools only.
+The main window can request capture, slot views/thumbnails, Clear/count changes,
+exports, configuration, and drag. Overlay windows receive only their own snapshot,
+readiness, finish, and cancel commands. Rust repeats window/slot/revision checks.
+`build.rs` generates command ACLs; there are no general filesystem, clipboard,
+shell, or drag-plugin grants. The frontend supplies slot IDs, never source paths.
+Only the native folder dialog can choose a custom export path. CSP permits local
+Blob images, with no arbitrary remote content. Standard paste shortcuts are untouched.
 
-## Existing region capture boundary
+## Storage and recovery
 
-Only the main window can invoke `capture_region(copy | save)`. It resolves with
-cancelled/copied/saved metadata or an actionable error. Rust serializes captures
-with a busy guard. Capture, PNG work, and clipboard/file operations use Tauri's
-blocking pool during explicit capture requests. This destination contract is
-legacy and must change for Store in Slot / Save to Device.
+Tauri’s `app_local_data_dir()/slots-v1` holds `manifest.json`, `store.lock`, and
+`image-<generation>.png` / `thumb-<generation>.png`. On macOS this is
+`~/Library/Application Support/io.github.karabulutumut.slotshot/slots-v1`; Windows
+uses the OS LocalAppData location resolved by Tauri. `app_config_dir()/settings.json`
+stores the versioned export setting (the app-data parent on macOS; the OS app-config
+location on Windows). No paths depend on the checkout. Default count is five.
 
-Rust snapshots all displays before overlays exist. Each display gets one opaque
-borderless webview showing its frozen PNG. `region_snapshot` returns binary bytes
-for the caller's own active display; JavaScript uses a temporary Blob URL, never
-base64 or persistent browser storage. `region_ready` reports image load; overlays
-appear only once every image is ready. A 15-second initialization deadline recovers
-from renderer/bootstrap failure; user selection has no timeout. `finish_region`
-receives normalized endpoints; `cancel_region` handles Escape/Cancel/display errors.
-Closing an overlay cancels capture. Rust validates coordinates and crops the
-original snapshot; the frontend cannot supply arbitrary output paths.
+A Rust mutex serializes filesystem access. An OS file lock rejects parallel app
+instances using the same storage. An operation lease excludes conflicting capture,
+settings, export, mutation, and drag requests; a native drag retains it until its
+OS completion/cancellation callback. Dropping a failed operation releases the lease.
+Source generations therefore remain stable while offered to another application.
 
-The current ACL grants the main capture command and four overlay commands only,
-scoped to their windows; there are no general clipboard, filesystem, shell,
-window-control, or network plugin grants. `build.rs` generates the command ACL
-manifest; generated permission files are ignored. CSP permits local Blob images.
+Rust validates 1–10 counts, occupied unique IDs, revisions, metadata versions,
+bounded dimensions, and generation basenames. Managed metadata/images must be
+regular files, not symlinks; source canonical paths must stay in the managed root.
+Invalid metadata stops loading without sweeping files. Missing/unreadable sources
+show a warning and can be restored or explicitly cleared. Export directories are
+canonicalized and rejected inside managed image/config storage, including symlink
+aliases; export destination checks repeat on use.
 
-macOS uses desktop points and platform-gated AppKit window levels above the menu
-bar. Windows uses physical positions/sizes, including negative origins. Moving,
-then sizing the Windows window on the main thread avoids DPI transition errors;
-final bounds are verified. Selection fractions map to actual snapshot dimensions,
-independent of browser `devicePixelRatio`. No cross-monitor stitching is implemented.
-See [Task 002 decisions and validation](CAPTURE.md).
+Replacement writes a new full PNG and a maximum 320×240 thumbnail to unique
+immutable generations. `tempfile` stages on the same filesystem, syncs content,
+and atomically replaces metadata/files (rename on Unix, MoveFileExW on Windows).
+The new files precede metadata; obsolete generations are removed only after the
+metadata commit. Unix directory entries are synced. A failed pre-commit replacement
+keeps the old assignment; a post-commit cleanup error reports that the change was
+committed and deletion needs retry. This is crash recovery, not a guarantee against
+all hardware/power-loss/filesystem failures.
 
-One capture session accepts at most 16 displays and 64 megapixels total (256 MiB
-RGBA before encoding; not a peak-memory claim). Snapshots are PNG bytes in Rust
-and decoded images in temporary webviews. Cropping decodes the selected display;
-windows/snapshots are released on success, cancellation, and error. Copy uses
-arboard's image API without temporary files; OS clipboard content can outlive the
-session. These are current limits and behavior, not a future retention policy.
+Clear/count reduction first commits the new assignments, then removes unreferenced
+PNGs/thumbnails. Revision checks reject stale confirmations; reductions with occupied
+slots additionally require explicit confirmation. Increasing count adds empty slots.
+Startup/Reload reconciles committed metadata against owned generation names and
+`.stage-` files, permanently deleting abandoned/obsolete files. Unknown files are
+left alone, exports are never swept, and cleanup failures remain visible/retryable.
+A missing thumbnail regenerates on demand from its original PNG. Normal deletion
+is not secure erasure. Windows open-file/rename failures require runtime testing;
+they surface as errors, with obsolete generations retried on Reload/restart.
 
-## Persistent slot storage (planned)
+## Independent exports
 
-Rust owns slot lifecycle, paths, PNG encoding, and filesystem operations. Resolve
-an application-owned root using Tauri's Rust `app_local_data_dir` path API
-(macOS Application Support; Windows LocalAppData), not the working directory or
-export directory. Use Rust path APIs throughout; keep platform-specific code gated.
-Never store screenshot bytes in localStorage or a database.
+First-run setup offers Pictures or a native folder picker; Settings changes the
+folder without moving prior exports. A create/sync/delete probe checks write access.
+Save to Device encodes only its selected region. Save Selected reads one source at
+a time, creates independent full-resolution PNGs, and reports successful paths and
+per-slot failures. `create_new` prevents overwrites; failed write/sync removes only
+that attempt’s incomplete export. Internal cleanup never touches export folders.
 
-Maintain a small versioned metadata file for slot count/assignments and managed
-PNG/thumbnail paths. Count is 1–10, default 5. Each occupied numbered slot references
-one full-resolution PNG; thumbnails are bounded, regenerable derivatives. Load
-metadata across restarts without decoding every full-resolution image. Validate
-slot IDs/counts in Rust as well as the frontend; resolve file paths from trusted
-metadata under the managed root, not frontend-supplied arbitrary paths. Validate
-persisted paths too and avoid following paths/symlinks outside managed storage.
+## Capture engine and limits
 
-Serialize mutations. Stage new files in the same filesystem, flush/sync as
-appropriate, and atomically commit files/metadata using platform-correct replacement.
-Do not delete a good old image before its replacement is durable. After commit,
-permanently remove the old PNG and obsolete thumbnail. Clear removes both files
-and empties the assignment. Increasing count creates empty slots; decreasing it
-removes every PNG and thumbnail above the new count. Before destructive reduction,
-require explicit confirmation if affected slots are occupied, and revalidate the
-current affected set before committing. Cancelling leaves files/count unchanged.
+XCap 0.9.8 provides one-shot snapshots; no recording service. Its macOS backend
+uses Core Graphics window-list capture, deprecated in favor of ScreenCaptureKit;
+future OS compatibility needs validation. macOS-only Core Graphics permission
+checks and AppKit window levels are platform-gated. `image` handles PNG/cropping;
+`serde`/`serde_json` provide typed metadata/IPC; Tokio’s time feature bounds overlay
+initialization on Tauri’s existing runtime.
 
-Handle interrupted writes and deletion failures with startup reconciliation of
-managed files against committed metadata, removing obsolete images/thumbnails
-and abandoned staging files. Report failed cleanup and retry it; do not silently
-retain screenshots in hidden/removed slots or report deletion complete while
-files remain. Restrict cleanup to Slotshot-owned files; never sweep export folders.
-Document/test crash recovery and Windows open-file/rename failures during
-implementation. Do not promise secure erasure beyond normal filesystem deletion.
+Capture hides the picker, waits once for 150 ms, then snapshots every display
+sequentially before creating any overlay. A display-specific binary IPC response
+becomes a temporary Blob URL. Overlays appear after all images report readiness;
+a 15-second initialization deadline recovers bootstrap failures. Selection has no
+timeout; Escape, Cancel, or closing an overlay releases the session. Snapshots
+stay in memory until success/cancellation/error; only the final destination writes.
 
-## Independent exports and settings (planned)
+One session accepts at most 16 displays and 64 megapixels total (256 MiB RGBA before
+encoding, not a peak-memory claim). Rust crops original pixels using normalized
+selection fractions, independent of webview devicePixelRatio. macOS uses desktop
+points; Windows uses physical bounds, including negative origins. Windows movement
+and final sizing run together on the main thread and verify resulting bounds to
+avoid DPI transition stretching. Regions stay on the originating display; no stitching.
 
-Save to Device writes a new independent PNG to the configured export directory.
-Choose that directory during initial setup, offering OS Pictures as the sensible
-default; allow changes in Settings. Persist settings in a small versioned local
-configuration file using the Rust app-config path API and safe replacement.
-Validate writable destinations and reject internal slot-storage locations for
-exports so cleanup cannot remove exports. No database is needed.
+Reconfigure displays between captures. Mirroring, fullscreen Spaces, virtual desktops,
+HDR/profiles, protected content, remote desktops, rotated/mixed-DPI displays, and
+cursor inclusion require runtime checks. Protected content may be black/unavailable;
+the backend does not request cursor inclusion. See README for permission recovery
+and exact native tests. Historical capture details remain in Git history and PR #1.
 
-Save Selected exports each selected occupied slot as a separate full-resolution
-PNG with collision-safe names. Export failure must preserve slots and existing
-exports, remove only incomplete files from that attempt, and identify successful
-and failed files. Replacing/clearing/reducing slots must never delete independent
-exports. Changing the export directory does not move or delete earlier exports.
-Adapt the current Pictures-only save path/errors rather than claiming this
-configuration already exists.
+## Native drag and window effects
 
-## Native file drag-out (planned)
+[CrabNebula drag-rs](https://github.com/crabnebula-dev/drag-rs), pinned to 2.1.1,
+is called directly from Rust on the main thread. This avoids the plugin’s generic
+frontend arbitrary-path API and an extra npm dependency. One `DragItem::Files`
+contains validated occupied-slot PNG paths; a bounded thumbnail supplies the icon.
+`DragMode::Copy` maps to NSDragOperationCopy / DROPEFFECT_COPY. Only the OS file
+transfer mechanism is used; there are no system clipboard Copy/Paste operations.
+Cancellation/rejection/error is reported and sources remain internal.
 
-Use [CrabNebula drag-rs and its Tauri 2 drag plugin](https://github.com/crabnebula-dev/drag-rs)
-as the intended technical direction, subject to compatibility testing. Upstream
-documents native file drags and a Tauri 2 plugin; Slotshot has not installed or
-validated them. Choose minimal dependencies/permissions only during implementation.
-Keep OS operations in Rust; grant only the necessary window-scoped capabilities.
+Native drag initialization/completion differs: macOS completes asynchronously;
+Windows DoDragDrop runs a modal OS loop. The guard survives both. If an OS callback
+never arrives, operations remain blocked to protect sources; quit/reopen to recover.
+An accepted OS drop does not establish that a receiving app imported every file.
+Test one/multiple PNGs with Finder/Explorer, ChatGPT, and common file-accepting apps.
+Multiple-file acceptance is destination-dependent. No destination matrix is claimed
+until those native tests have been observed.
 
-The frontend sends selected slot IDs. Rust validates occupied slots and resolves
-their PNG paths, then starts **one** native drag offering all selected files.
-Use source-preserving copy semantics, never move files out of internal storage.
-Keep sources available throughout the native drag; coordinate/defer replacement,
-Clear, and count reduction while affected files are in use. Validate cancellation,
-completion, destination-requested move behavior, and Windows file locks; if the
-integration cannot preserve sources, it does not meet the requirement.
+`rfd` 0.17.2 supplies only native folder dialogs (Linux features disabled); no
+frontend filesystem/dialog permission is granted. `tempfile` supplies cross-platform
+atomic replacement and private staging files, already present transitively. No new
+npm runtime package is needed; arboard and its unused clipboard dependencies are
+removed. Tauri’s `macos-private-api` feature enables transparent webviews, with HUD
+vibrancy on macOS and Acrylic on supported Windows versions. It is unsuitable for
+Mac App Store submission without revisiting that choice. OS settings may reduce
+transparency; window controls/resize remain native. No hotkey or tray plugin is added.
 
-Do not substitute HTML-only dragging, base64 payloads, clipboard writes, simulated
-pasting, clipboard monitoring/restoration, or interception of standard Cmd/Ctrl+V.
-The final product has no system clipboard Copy/Paste action or multi-image
-clipboard feature. Remove the legacy arboard path/dependency when implementation
-no longer uses it; do not change dependencies in Task 003A.
+## Validation status
 
-## Picker, resources, and platform validation (planned)
-
-Follow [Template 1](DESIGN.md), including Save/Clear, no thumbnail context menus,
-full resizing, and primary native drag-out. Shift selects ranges; Cmd (macOS) /
-Ctrl (Windows) toggles individuals. Dragging a selected thumbnail keeps the group.
-Keep UI selection state local and file operations in Rust; use thumbnails and
-bounded decoded-image memory instead of keeping every full PNG decoded.
-
-Preserve event-driven idle behavior. Currently there are no permanent capture
-windows, polling, hotkey listeners, or capture workers; capture uses a single
-150 ms settling delay after hiding the launcher and sequential snapshots, not
-synchronized video frames. Measure idle CPU, startup, capture/drag latency, and
-peak memory before making resource claims. Validate transparency and native
-window differences without changing the approved visual direction.
-
-| Area        | Required macOS and Windows runtime validation                                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Capture     | Permissions, cancellation, frozen image fidelity, mixed-DPI/multi-monitor positioning.                                                                                         |
-| Storage     | Restart persistence, full PNG fidelity, replacement/Clear cleanup, occupied-count confirmation/cancellation, interrupted writes, recovery, permission and disk errors.         |
-| Export      | Setup/Settings directory selection, collision-safe single/batch exports, partial failure reporting, exported files surviving slot deletion/replacement/reduction.              |
-| Native drag | Single/multiple files in one drag; ChatGPT, Finder/Explorer, and common file-accepting apps; accepted/rejected/cancelled drops; source preservation and mutation coordination. |
-| Picker      | Shift/Cmd/Ctrl selection, dragging a selected group, empty slots, resizing, keyboard access, visual consistency, idle overhead.                                                |
-
-Record actual app/OS versions and observed single/multiple-drop outcomes. Do not
-promise every receiving application accepts multiple image files. These workflows
-are unverified; compilation is not runtime compatibility evidence. Existing Rust
-tests cover coordinates, PNG pixels, export collisions/errors, and overlay
-initialization recovery; new behavior needs focused lifecycle/selection/error tests.
-
-## Task 003B handoff
-
-- Replace Copy Region, `copy`/`copied` command/result handling, arboard writes,
-  clipboard-specific errors, and the launcher's “visual screenshot clipboard”
-  wording with the approved capture destinations and file-based picker.
-- The React launcher and Rust/TypeScript capture implementation intentionally
-  remain unchanged in 003A; only the static HTML product description is aligned.
-- Implement slot persistence/cleanup/recovery, setup/settings and independent
-  exports, native file drag, and Template 1 selection/interactions. Reuse the
-  existing capture engine; no slots or file drag are implemented by this document.
-- Validate the platform/receiving-app cases above and record limitations. Keep
-  Task 002's historical clipboard validation clearly labeled rather than rewriting
-  prior commits, PRs, or releases.
+Frontend selection tests and Rust lifecycle/path/error tests use synthetic images.
+On macOS 26.6.2, the rebuilt unsigned app was launched and the new picker,
+translucent surface, native folder-dialog cancellation, Pictures setup, Shift/Cmd
+selection, increasing to ten empty slots, returning to five, and restart retention of count/export
+settings were observed. Capture returned the actionable Screen Recording permission
+error and recovered to an enabled picker. Permission was not granted in this session,
+so real captures, occupied-slot GUI workflows, and native file drops remain unverified.
+Windows runtime, display edge cases, receiving-app compatibility, and resource
+measurements also remain unverified. See README’s manual procedure; CI does not
+launch the application.

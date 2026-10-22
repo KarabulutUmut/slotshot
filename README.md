@@ -1,62 +1,48 @@
 # Slotshot
 
-Slotshot is an open-source screenshot utility being built for macOS and Windows.
-The approved direction is region capture to persistent local screenshot slots or
-independent PNG exports, with native file drag-out into other applications.
-The planned picker has 1–10 configurable slots (default 5), each holding one
-full-resolution PNG.
-It uses Tauri 2, Rust, React, TypeScript, Vite, and plain CSS. The application is
-local-only: no server, accounts, database, analytics, or cloud services.
+A local screenshot utility for macOS and Windows, built with Tauri 2, Rust,
+React, TypeScript, Vite, and plain CSS. No server, accounts, database, analytics,
+or cloud services. There are no downloadable releases yet.
 
-## Development status
+## Current application — Task 003B
 
-**Implemented — Task 002: native region capture.** The desktop app offers **Copy Region** and
-**Save Region** test buttons. Drag a rectangle on any connected display; Escape
-cancels. Copy writes an actual image to the system clipboard. Save exports a PNG
-to your Pictures folder without overwriting existing files. Regions stay on one
-display; cross-display stitching is not implemented.
+- **Store in Slot:** select a numbered slot, then capture a region. With no single
+  destination selected, use the first empty slot. Replacing an occupied slot
+  requires confirmation; cancelling capture keeps the previous image.
+- **Persistent picker:** 1–10 slots (default 5), full-resolution PNGs and bounded
+  thumbnails in OS application data. Restart restores assignments and settings.
+- **Native file drag:** click to select, Shift for a range, Cmd on macOS / Ctrl on
+  Windows to toggle individuals. Drag an occupied thumbnail to offer all selected
+  occupied PNGs together with copy semantics. Empty slots offer no files.
+- **Independent exports:** choose Pictures or another folder on first run. Change
+  it in Settings. **Save to Device** captures directly there; toolbar **Save**
+  exports selected slots individually with unique filenames and per-file results.
+- **Clear / slot count:** permanently delete affected internal PNGs and thumbnails.
+  Count reductions involving occupied slots require confirmation. Exported files
+  survive replacement, Clear, and count reduction. Cleanup errors remain visible
+  and can be retried with Reload or restart.
+- A compact, dark, resizable Template 1 picker with numbered thumbnails and blue
+  selection. Tab, arrow keys, Home/End, Space/Enter, and modifier selection provide
+  basic keyboard access. Open Slotshot normally to open the picker.
 
-The selection shows a frozen snapshot taken before the overlay opens. Screenshots
-stay in memory until completion or cancellation; only Save writes an image file.
-macOS requires Screen Recording permission. Slots, hotkeys, settings, and the final
-picker UI remain planned. There are no downloadable releases.
+There are no Copy/Paste controls, system clipboard integration, standard paste
+shortcut interception, thumbnail context menus, or reordering. Global hotkeys,
+tray/background operation, editing, signing, and distribution remain out of scope.
+See [product rules](docs/PRODUCT.md), [architecture and limitations](docs/ARCHITECTURE.md),
+and [approved design](docs/DESIGN.md).
 
-**Approved target — Task 003A specifies; Task 003B must implement.** Capture will
-offer **Store in Slot** and **Save to Device**. Legacy Copy Region and its native
-clipboard operation still exist and must be removed/replaced. The final product
-has no system clipboard Copy, Paste, paste simulation, clipboard monitoring or
-restoration, or interception of standard Cmd/Ctrl+V. Persistent slots, native file
-drag-and-drop, export settings, and the approved picker are not implemented yet.
+## Native validation and limitations
 
-See [capture design, limitations, and manual test instructions](docs/CAPTURE.md).
-Windows CI compilation does not establish Windows runtime behavior.
+Capture uses a frozen snapshot before selection overlays open; Escape or Cancel
+abandons the capture. Regions stay on their originating display. macOS requires
+Screen Recording permission. Multi-monitor/mixed-DPI fidelity, Windows runtime,
+and receiving-app drag compatibility require native testing; compilation alone
+is not runtime evidence. Destination apps may accept only one file or reject drops.
 
-## Approved planned functionality
-
-- Persist slots in the OS-standard application data location across restarts.
-  Replace/Clear removes the old PNG and thumbnail. Reducing the count deletes all
-  removed slots' files; confirm first if any affected slot is occupied. Increasing
-  the count adds empty slots; never retain hidden screenshots in removed slots.
-- Select one image, Shift ranges, or Cmd (macOS) / Ctrl (Windows) individual images,
-  then drag all selected PNGs in one native file operation that preserves sources.
-- Save to Device and Save Selected create independent PNGs in an export directory
-  chosen during initial setup (Pictures is the sensible default), changeable in
-  Settings. Slot changes never delete these exports.
-- Preserve the compact, dark, translucent Template 1 picker, thumbnail numbers,
-  blue selection highlights, full window resizing, and Save/Clear toolbar actions.
-  Native drag-out is the primary transfer interaction; no thumbnail context menus.
-- Configurable global capture/picker hotkeys, consistent macOS/Windows behavior,
-  and no interception of standard paste shortcuts.
-- Low idle resource use and bounded image memory.
-
-CrabNebula drag-rs / its Tauri 2 drag plugin is the intended native drag direction,
-subject to compatibility testing. Test single/multiple file drops on both platforms,
-including ChatGPT and common file-accepting apps; not every app accepts multiple
-dropped images. No drag dependencies are installed yet.
-
-See [product requirements](docs/PRODUCT.md) and [architecture](docs/ARCHITECTURE.md)
-for lifecycle and implementation requirements, and [approved design](docs/DESIGN.md)
-for the existing Template 1 reference and interaction changes.
+The macOS translucent webview requires Tauri’s `macos-private-api` feature; this
+precludes Mac App Store submission without revisiting transparency. Windows uses
+Acrylic where supported; appearance depends on OS and accessibility settings.
+The application keeps normal window controls and OS resizing.
 
 ## Prerequisites
 
@@ -96,7 +82,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:1420`. Capture buttons are disabled in a browser; this
+Open `http://127.0.0.1:1420`. Native actions are disabled in a browser; this
 preview does not validate native APIs.
 Vite binds to loopback and uses a fixed port; stop another process using port
 1420 before starting it. There is no production web server.
@@ -122,8 +108,9 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 npm run tauri -- build --debug --no-bundle -- --locked
 ```
 
-`cargo test` covers coordinate validation, PNG roundtrips, filename collisions,
-save errors, and overlay initialization recovery. The final command
+`npm run check` also runs the selection tests using Node’s built-in test runner.
+`cargo test` covers capture coordinates/readiness, slot lifecycle/recovery, exports,
+trusted drag inputs, symlinks, and operation locking. The final command
 compiles a debug desktop executable without packaging or signing. For a local
 release build, use `npm run tauri -- build --no-bundle -- --locked`; signed distribution
 and installers are future work. Build output is under `src-tauri/target/`.
@@ -143,27 +130,60 @@ Clippy, Rust tests, and compile the desktop app. GitHub-hosted runners supply
 Xcode or MSVC/Windows SDK/WebView2. CI does not launch the GUI, validate native
 workflows, publish a release, or install an app on your machine.
 
-## Roadmap
+## Exact macOS manual testing
 
-1. **Foundation (Task 001):** scaffold, placeholder, documentation, developer
-   checks, and CI configuration. Task 001.5 validates the existing foundation and
-   commits the native dependency lockfile; macOS launch has been manually confirmed.
-2. **Capture (Task 002):** implemented single-region copy/save engine; real OS
-   permissions, scaling, multi-monitor capture, and Windows runtime need validation.
-3. **Architecture alignment (Task 003A):** document the file-based direction and
-   preserve the approved visual reference; no application changes.
-4. **File-based workflow (Task 003B):** replace legacy Copy Region, implement slot
-   persistence/cleanup, setup/settings for independent exports, native file drag,
-   and the Template 1 picker with tested selection. See the
-   [implementation handoff](docs/ARCHITECTURE.md#task-003b-handoff).
-5. **Validation and distribution:** test native capture and drag destination
-   compatibility on macOS and Windows, configure hotkeys, measure idle resources,
-   and prepare signed releases once ready.
+1. From `~/Developer/Screenshot`, run `npm ci`, then
+   `npm run tauri -- build --debug --bundles app -- --locked`, then
+   `open ./src-tauri/target/debug/bundle/macos/Slotshot.app`.
+   Alternatively use `npm run tauri -- dev`. Use the exact new bundle path to
+   avoid opening an older installed build. The bundle tests production assets/CSP.
+   Quit other Slotshot
+   instances first; the storage lock deliberately rejects a second instance.
+2. On first run, choose **Use Pictures** or **Choose Folder…**. Cancel the folder
+   dialog once and verify setup stays open. Open Settings, change folder, and
+   change the slot count from 5 to 10 and back while empty.
+3. Prepare non-private colored shapes/text in another window. Select empty slot 1,
+   click **Store in Slot**, and grant permission in **System Settings → Privacy &
+   Security → Screen & System Audio Recording** if requested. The entry may be
+   Slotshot or the terminal/development host. Fully quit/reopen after changing it.
+   Drag a region and release; inspect the thumbnail and reported pixel dimensions.
+4. Select occupied slot 1 and choose Store again. Cancel replacement confirmation
+   and verify no capture begins. Confirm replacement, then cancel capture with
+   Escape; the old image must remain. Repeat using the overlay Cancel button.
+   Complete replacement and verify the old internal PNG/thumbnail are removed.
+5. Populate slots 2 and 5. Test plain click, Shift ranges in both directions,
+   Cmd individual toggles, dragging an already selected group, and keyboard access.
+   Resize narrow/wide; verify every configured slot and both toolbar buttons remain
+   accessible. No thumbnail context menu or reordering should appear.
+6. Save selected slots twice. Open the reported export PNGs in Preview and check
+   content, sharpness, colors, dimensions, and distinct filenames. Capture with
+   Save to Device; it must create an independent export without populating a slot.
+7. Drag one screenshot, then a group, to Finder, ChatGPT, and another file-accepting
+   app available locally. Record app/OS versions and single/multiple-file outcomes.
+   Escape a drag and try a rejected destination. Internal sources must remain
+   present; Clear/replacement/count changes must be blocked until drag ends.
+8. Reduce the count to 3 while slot 5 is occupied. Cancel first: count and files
+   stay intact. Confirm next: slot 5’s PNG and thumbnail must disappear. Increase
+   to 5 again: slot 5 must be empty. Clear selected occupied slots after confirming.
+   Verify all earlier exports remain unchanged.
+9. Quit/reopen with occupied slots and check count, assignments, thumbnails, and
+   export folder persistence. Inspect the managed location described in
+   [architecture](docs/ARCHITECTURE.md#storage-and-recovery) if testing cleanup.
+   Never use personal/private captures for destructive failure tests.
+10. Repeat reversed drags and edge captures on Retina/external displays, including
+    displays above/left of primary and mixed scaling. A 100-point region on a 2×
+    snapshot should be 200 pixels. Inspect for clipping or captured overlay UI.
+    Reconfigure displays only between captures. Check recovery after closing an overlay.
+11. In a disposable account/folder, test unavailable/unwritable exports, disk/write
+    errors, interrupted writes, and cleanup retry. Errors must be visible, existing
+    slots/exports preserved, and partial exports removed. Revoke screen permission,
+    quit/reopen, and verify an actionable error and usable picker, then restore it.
+12. Quit Slotshot when done. Repeat relevant capture, storage, export, selection,
+    and drag tests on Windows; a Windows CI build does not validate them.
 
 ## Contributing and license
 
-Read [AGENTS.md](AGENTS.md) for project conventions. Keep changes small, maintain
-cross-platform behavior, add tests with behavior, and document anything that
-could not be verified.
-
+Use regular feature branches in the primary local checkout; see [AGENTS.md](AGENTS.md).
+Keep changes small and document unverified behavior. Historical Task 002 details
+remain in Git history and [PR #1](https://github.com/KarabulutUmut/slotshot/pull/1).
 Slotshot is licensed under the [MIT License](LICENSE).
