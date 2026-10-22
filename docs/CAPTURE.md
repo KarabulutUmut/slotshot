@@ -1,5 +1,13 @@
 # Task 002: native region capture
 
+This document records Task 002 and its still-present implementation, including
+legacy Copy Region and native clipboard writes. Task 003A changes documentation
+only. The approved target replaces Copy Region with Store in Slot and Save to
+Device, persistent local PNG slots, and native file drag-out; none is implemented
+yet. See [product requirements](PRODUCT.md), [architecture](ARCHITECTURE.md), and
+[Template 1 design](DESIGN.md). The clipboard dependencies, behavior, and manual
+tests below describe the legacy capture build, not a final product requirement.
+
 ## Decision and dependencies
 
 Use [XCap 0.9.8](https://github.com/nashaofu/xcap) for one-shot display snapshots and
