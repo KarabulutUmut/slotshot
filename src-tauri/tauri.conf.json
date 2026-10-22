@@ -14,17 +14,26 @@
       {
         "label": "main",
         "title": "Slotshot",
-        "width": 800,
-        "height": 600,
+        "width": 760,
+        "height": 420,
         "minWidth": 360,
-        "minHeight": 400,
-        "resizable": true
+        "minHeight": 300,
+        "resizable": true,
+        "theme": "Dark",
+        "backgroundColor": "#00000000",
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["hudWindow", "acrylic"],
+          "state": "active",
+          "radius": 12
+        }
       }
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src ipc: http://ipc.localhost",
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
