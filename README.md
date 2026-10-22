@@ -1,14 +1,16 @@
 # Slotshot
 
 Slotshot is an open-source screenshot utility being built for macOS and Windows.
-The goal is quick region capture with a visual screenshot clipboard containing
-1–10 configurable slots. It uses Tauri 2, Rust, React, TypeScript, Vite, and plain
-CSS. The application is local-only: no server, accounts, database, analytics, or
-cloud services.
+The approved direction is region capture to persistent local screenshot slots or
+independent PNG exports, with native file drag-out into other applications.
+The planned picker has 1–10 configurable slots (default 5), each holding one
+full-resolution PNG.
+It uses Tauri 2, Rust, React, TypeScript, Vite, and plain CSS. The application is
+local-only: no server, accounts, database, analytics, or cloud services.
 
 ## Development status
 
-**Task 002: native region capture.** The desktop app offers **Copy Region** and
+**Implemented — Task 002: native region capture.** The desktop app offers **Copy Region** and
 **Save Region** test buttons. Drag a rectangle on any connected display; Escape
 cancels. Copy writes an actual image to the system clipboard. Save exports a PNG
 to your Pictures folder without overwriting existing files. Regions stay on one
@@ -19,23 +21,42 @@ stay in memory until completion or cancellation; only Save writes an image file.
 macOS requires Screen Recording permission. Slots, hotkeys, settings, and the final
 picker UI remain planned. There are no downloadable releases.
 
+**Approved target — Task 003A specifies; Task 003B must implement.** Capture will
+offer **Store in Slot** and **Save to Device**. Legacy Copy Region and its native
+clipboard operation still exist and must be removed/replaced. The final product
+has no system clipboard Copy, Paste, paste simulation, clipboard monitoring or
+restoration, or interception of standard Cmd/Ctrl+V. Persistent slots, native file
+drag-and-drop, export settings, and the approved picker are not implemented yet.
+
 See [capture design, limitations, and manual test instructions](docs/CAPTURE.md).
 Windows CI compilation does not establish Windows runtime behavior.
 
-## Planned functionality
+## Approved planned functionality
 
-- A visual clipboard with 1–10 slots and thumbnail previews.
-- Assign, replace, delete, and select images, including range and multi-selection.
-- Configurable global hotkeys and default save location.
-- A resizable screenshot picker with consistent macOS and Windows behavior.
+- Persist slots in the OS-standard application data location across restarts.
+  Replace/Clear removes the old PNG and thumbnail. Reducing the count deletes all
+  removed slots' files; confirm first if any affected slot is occupied. Increasing
+  the count adds empty slots; never retain hidden screenshots in removed slots.
+- Select one image, Shift ranges, or Cmd (macOS) / Ctrl (Windows) individual images,
+  then drag all selected PNGs in one native file operation that preserves sources.
+- Save to Device and Save Selected create independent PNGs in an export directory
+  chosen during initial setup (Pictures is the sensible default), changeable in
+  Settings. Slot changes never delete these exports.
+- Preserve the compact, dark, translucent Template 1 picker, thumbnail numbers,
+  blue selection highlights, full window resizing, and Save/Clear toolbar actions.
+  Native drag-out is the primary transfer interaction; no thumbnail context menus.
+- Configurable global capture/picker hotkeys, consistent macOS/Windows behavior,
+  and no interception of standard paste shortcuts.
 - Low idle resource use and bounded image memory.
 
-**Multi-image pasting requires technical validation.** Multiple selection does
-not imply that another application can accept several images in one paste.
-Native clipboard formats and receiving-app behavior must be tested on both OSes.
+CrabNebula drag-rs / its Tauri 2 drag plugin is the intended native drag direction,
+subject to compatibility testing. Test single/multiple file drops on both platforms,
+including ChatGPT and common file-accepting apps; not every app accepts multiple
+dropped images. No drag dependencies are installed yet.
 
 See [product requirements](docs/PRODUCT.md) and [architecture](docs/ARCHITECTURE.md)
-for planned workflows, technical boundaries, and open questions.
+for lifecycle and implementation requirements, and [approved design](docs/DESIGN.md)
+for the existing Template 1 reference and interaction changes.
 
 ## Prerequisites
 
@@ -112,6 +133,10 @@ Use `npm ci` and `--locked` for native checks/builds so validation cannot silent
 change dependency resolution. Regenerate lockfiles only for intentional dependency
 updates; do not handwrite them.
 
+For documentation-only changes, validate changed Markdown formatting, local links,
+specification consistency, and `git diff --check`; dependency installs, application
+builds, and native smoke tests are not required. See [AGENTS.md](AGENTS.md).
+
 The [CI workflow](.github/workflows/ci.yml) runs on pushes, pull requests, and manual
 dispatches. Both macOS and Windows jobs check frontend code, Rust formatting,
 Clippy, Rust tests, and compile the desktop app. GitHub-hosted runners supply
@@ -123,18 +148,17 @@ workflows, publish a release, or install an app on your machine.
 1. **Foundation (Task 001):** scaffold, placeholder, documentation, developer
    checks, and CI configuration. Task 001.5 validates the existing foundation and
    commits the native dependency lockfile; macOS launch has been manually confirmed.
-2. **Capture validation:** test OS permissions, region selection, scaling, and
-   single-image clipboard/save behavior on macOS and Windows.
-3. **Visual clipboard:** define image lifecycle, implement 1–10 slots, thumbnails,
-   assignment/replacement/deletion, and tested selection behavior.
-4. **Preferences and picker:** configurable shortcuts and save location, conflict
-   handling, persistence rules, and picker resizing/keyboard access.
-5. **Validation and distribution:** evaluate multi-image paste compatibility,
-   measure idle resources, test real workflows on both OSes, and prepare signed
-   releases once ready.
-
-Task 002 implements single-region copy/save only. Screenshot slots and shortcuts
-remain planned.
+2. **Capture (Task 002):** implemented single-region copy/save engine; real OS
+   permissions, scaling, multi-monitor capture, and Windows runtime need validation.
+3. **Architecture alignment (Task 003A):** document the file-based direction and
+   preserve the approved visual reference; no application changes.
+4. **File-based workflow (Task 003B):** replace legacy Copy Region, implement slot
+   persistence/cleanup, setup/settings for independent exports, native file drag,
+   and the Template 1 picker with tested selection. See the
+   [implementation handoff](docs/ARCHITECTURE.md#task-003b-handoff).
+5. **Validation and distribution:** test native capture and drag destination
+   compatibility on macOS and Windows, configure hotkeys, measure idle resources,
+   and prepare signed releases once ready.
 
 ## Contributing and license
 

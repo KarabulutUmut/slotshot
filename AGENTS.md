@@ -1,8 +1,11 @@
 # Working on Slotshot
 
-- Read README.md, docs/PRODUCT.md, and docs/ARCHITECTURE.md before changing behavior.
-- Implement only the requested task. Task 001 is foundation only; capture, slots,
-  shortcuts, and clipboard features remain planned.
+- Read README.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, docs/CAPTURE.md, and
+  docs/DESIGN.md before changing behavior. Implement only the requested task.
+- Distinguish implemented behavior from the approved target. Task 002's Copy
+  Region/native clipboard and Pictures-only Save still exist. Task 003A aligns
+  documentation only; Task 003B must replace the legacy flow. Persistent slots,
+  native file drag-out, export settings, and the Template 1 picker remain planned.
 - Keep one small React/TypeScript frontend, plain CSS, and a Rust/Tauri backend.
   Prefer direct functions and local state; add abstractions only for real needs.
 - Keep runtime dependencies minimal. Justify new crates, npm packages, plugins,
@@ -13,17 +16,48 @@
   frontend input, and grant only the Tauri permissions a feature actually uses.
 - Use npm and preserve package-lock.json and src-tauri/Cargo.lock. Use `--locked`
   for Rust checks/builds and update lockfiles only for intentional dependency changes.
-- Run `npm ci`, `npm run check`, and `npm run build`. With Rust installed, also run
+- For application/configuration/dependency changes, run `npm ci`, `npm run check`,
+  and `npm run build`. With Rust installed, also run
   `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`,
   `cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings`,
   `cargo test --manifest-path src-tauri/Cargo.toml --locked`, and
   `npm run tauri -- build --debug --no-bundle -- --locked`.
+- For documentation-only changes, check changed Markdown formatting, local links,
+  specification consistency, and `git diff --check`. Dependency installation,
+  application builds, and native smoke tests are not required for that scope.
 - Add focused tests with new behavior, particularly selection rules, persistence,
   and OS error handling. Do not add placeholder tests just to claim coverage.
 - Smoke-test relevant UI and native workflows on both platforms when possible.
   Report missing prerequisites and unverified behavior honestly.
 - Update docs when scope or setup changes. Use conventional commits, preserve
   existing work and remotes, and never commit generated output or private data.
+
+## Binding file-based architecture
+
+- Final capture destinations: Store in Slot and Save to Device. No system
+  clipboard Copy/Paste feature, multi-image clipboard transfer, paste simulation,
+  clipboard monitoring/restoration, or interception of standard Cmd/Ctrl+V.
+- Use 1–10 numbered slots, default 5, each with one full-resolution PNG persisted
+  in the OS-standard application data location across restarts. Rust owns paths,
+  file operations, safe/atomic replacement, and cleanup; no database.
+- Replace/Clear permanently removes old PNGs and obsolete thumbnails. Increasing
+  count creates empty slots. Decreasing count permanently removes every image
+  and thumbnail above the new count; confirm first when affected slots are
+  occupied. Never silently retain screenshots in hidden/removed slots.
+- Exports are independent PNG files in the user's configured directory, chosen
+  during initial setup with a sensible default and changeable in Settings. Save
+  Selected exports multiple slots as separate PNGs. Slot deletion/replacement
+  must never delete separately exported screenshots.
+- Native drag-out offers selected PNGs together in one file drag and preserves
+  source files. CrabNebula drag-rs / the Tauri 2 drag plugin is the intended
+  direction, subject to compatibility testing; do not install dependencies until
+  implementation requires them. Test on macOS and Windows, including ChatGPT and
+  common file-accepting apps; never promise universal multi-file drop support.
+- Preserve approved Template 1: compact dark translucent picker, thumbnails,
+  slot numbers, blue selection, full resizing, Save/Clear toolbar, and native
+  drag-out as the primary transfer action. No thumbnail context menus. Shift
+  selects ranges; Cmd (macOS) / Ctrl (Windows) selects individuals. The reference
+  image's obsolete Copy/Paste interactions are superseded by docs/DESIGN.md.
 
 ## No automatic code review
 
