@@ -78,7 +78,12 @@ fn state_error() -> String {
 fn permission() -> Result<(), String> {
     let access = core_graphics::access::ScreenCaptureAccess;
     if !access.preflight() && !access.request() {
-        return Err("Screen Recording permission is required. Enable Slotshot (or the development host) in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen the app.".into());
+        let executable = std::env::current_exe()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "unknown executable".into());
+        return Err(format!(
+            "Screen Recording access was not granted (preflight=false, request=false); no screenshot was attempted. Running executable: {executable}. Enable the canonical ~/Applications/Slotshot.app in System Settings → Privacy & Security → Screen & System Audio Recording, then fully quit and reopen it. An enabled entry for an older signature may need removal and re-adding; see README."
+        ));
     }
     Ok(())
 }
@@ -116,7 +121,7 @@ fn snapshots() -> Result<Vec<Snapshot>, String> {
             return Err("The connected displays exceed the capture memory limit (64 megapixels). Disconnect a display or lower its resolution.".into());
         }
         let image = monitor.capture_image().map_err(|e| {
-            format!("Screen capture failed: {e}. Check screen permissions and retry.")
+            format!("Screen capture backend failed after the permission check passed: {e}. Retry capture; if it persists, report this backend error separately from a permission denial.")
         })?;
         let (width, height) = image.dimensions();
         total_pixels += u64::from(width) * u64::from(height);
