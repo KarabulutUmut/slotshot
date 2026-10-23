@@ -16,6 +16,9 @@ No server, database, application network client, accounts, analytics, or cloud.
 - `slots.rs`: window-restricted commands, blocking filesystem workers, native
   directory dialog, native drag, and shared operation guard.
 - `export.rs`: PNG encoding and `create_new` exports, including partial-file cleanup.
+- `window.rs`: event-driven, in-memory picker geometry; bounded restore from a
+  separate preference file, written only on normal close/quit. No screenshot paths
+  or operations change.
 
 The main window can request capture, slot views/thumbnails, Clear/count changes,
 exports, configuration, and drag. Overlay windows receive only their own snapshot,

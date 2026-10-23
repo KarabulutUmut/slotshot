@@ -5,10 +5,12 @@ import {
   useRef,
   useState,
   type PointerEvent,
+  type ReactNode,
 } from "react";
 import { captureRegion, type Destination } from "./capture";
 import RegionOverlay from "./RegionOverlay";
 import { selectSlot, type SelectionState } from "./selection";
+import { fitSlots, nextSlotIndex } from "./layout";
 import "./App.css";
 
 type Entry = { token: string; width: number; height: number };
@@ -62,6 +64,62 @@ function Confirm({ value, close }: { value: Confirmation; close: () => void }) {
   );
 }
 
+function Icon({
+  name,
+}: {
+  name: "capture" | "save" | "clear" | "settings" | "plus";
+}) {
+  const paths = {
+    capture: "M5 2H2v3m9-3h3v3M2 11v3h3m9-3v3h-3M5 8h6M8 5v6",
+    save: "M8 2v8m-3-3 3 3 3-3M2 10v4h12v-4",
+    clear: "M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5m2-5v5",
+    settings:
+      "m6 2 .5-1h3L10 2l1 .6 1.2.1 1.5 2.6-.5 1.1v1.2l.5 1.1-1.5 2.6-1.2.1-1 .6-.5 1h-3l-.5-1-1-.6-1.2-.1L2.3 9.7l.5-1.1V7.4l-.5-1.1 1.5-2.6L5 3.6 6 3M10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0",
+    plus: "M8 3v10M3 8h10",
+  };
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={paths[name]} />
+    </svg>
+  );
+}
+
+function Sheet({
+  children,
+  close,
+  label,
+}: {
+  children: ReactNode;
+  close?: () => void;
+  label: string;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="settings"
+      aria-label={label}
+      onCancel={(event) => {
+        if (close) close();
+        else event.preventDefault();
+      }}
+    >
+      {children}
+    </dialog>
+  );
+}
+
 function Picker() {
   const native = isTauri();
   const [view, setView] = useState<SlotView | null>(native ? null : preview);
@@ -73,11 +131,12 @@ function Picker() {
   const [busy, setBusy] = useState(false);
   const [settings, setSettings] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [message, setMessage] = useState(
-    native
-      ? "Loading local slots…"
-      : "Desktop preview · Open the Tauri app to capture and manage screenshots.",
-  );
+  const [failure, setFailure] = useState(false);
+  const [details, setDetails] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [layout, setLayout] = useState(() => fitSlots(5, 624, 156));
+  const viewport = useRef<HTMLDivElement>(null);
+  const [message, setMessage] = useState(native ? "Loading local slots…" : "");
   const inFlight = useRef(false);
   const press = useRef<{
     x: number;
@@ -109,10 +168,13 @@ function Picker() {
       .then((next) => {
         if (disposed) return;
         setView(next);
-        setMessage("Select screenshots, then drag them into another app.");
+        setMessage("");
       })
       .catch((e: unknown) => {
-        if (!disposed) setMessage(String(e));
+        if (!disposed) {
+          setMessage(String(e));
+          setFailure(true);
+        }
       });
     return () => {
       disposed = true;
@@ -146,10 +208,12 @@ function Picker() {
           ),
         ),
       );
-      if (results.some((r) => r.status === "rejected"))
+      if (results.some((r) => r.status === "rejected")) {
+        setFailure(true);
         setMessage(
           "Some thumbnails could not load. Retry loading slots; originals remain on disk.",
         );
+      }
     });
     return () => {
       disposed = true;
@@ -161,24 +225,44 @@ function Picker() {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
+    setFailure(false);
     try {
       setMessage(await action());
     } catch (e) {
+      setFailure(true);
       setMessage(String(e));
     } finally {
       try {
         await refresh();
       } catch (e) {
+        setFailure(true);
         setMessage(String(e));
       }
       inFlight.current = false;
       setBusy(false);
+      setDragging(false);
     }
   };
 
   const occupied = selection.ids.filter((id) => view?.slots[id - 1]);
   const ready = native && !!view && !busy;
   const setup = !!view && !view.exportDirectory;
+
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setLayout(
+        fitSlots(
+          view?.slots.length ?? 5,
+          entry.contentRect.width - 8,
+          entry.contentRect.height - 8,
+        ),
+      );
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [view?.slots.length]);
 
   const capture = (destination: Destination) => {
     if (!view) return;
@@ -264,48 +348,43 @@ function Picker() {
     start.dragged = true;
     event.currentTarget.releasePointerCapture(event.pointerId);
     const ids = start.ids.filter((id) => view.slots[id - 1]);
+    setDragging(true);
     void run(() => invoke<string>("drag_slots", { ids }));
   };
 
   return (
-    <main className="picker">
-      <header className="picker-header">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            ▣
-          </span>
-          <h1>Slotshot</h1>
-          <span className="slot-count">{view?.slots.length ?? "…"} slots</span>
+    <main className={`picker ${native && mac ? "mac-native" : ""}`}>
+      <header className="picker-header" data-tauri-drag-region>
+        <h1 className="sr-only">Slotshot</h1>
+        <div className="capture-actions">
+          <button
+            disabled={!ready || setup}
+            title="Capture into the selected slot, or the first empty slot"
+            onClick={() => capture("store")}
+          >
+            <Icon name="capture" /> Store in Slot
+          </button>
+          <button disabled={!ready || setup} onClick={() => capture("save")}>
+            <Icon name="save" /> Save to Device
+          </button>
         </div>
         <button
           className="icon-button"
           aria-label="Settings"
-          aria-expanded={settings}
+          title="Settings"
+          aria-haspopup="dialog"
+          aria-expanded={settings || setup}
           disabled={!view || busy}
           onClick={() => setSettings(!settings)}
         >
-          ⚙
+          <Icon name="settings" />
         </button>
       </header>
-      <div className="capture-actions">
-        <button
-          className="primary"
-          disabled={!ready || setup}
-          onClick={() => capture("store")}
-        >
-          ＋ Store in Slot
-        </button>
-        <button disabled={!ready || setup} onClick={() => capture("save")}>
-          Save to Device
-        </button>
-        <span className="destination-hint">
-          {selection.ids.length === 1
-            ? `Into slot ${selection.ids[0]}`
-            : "Into first empty slot"}
-        </span>
-      </div>
       {(settings || setup) && view && (
-        <section className="settings" aria-labelledby="settings-title">
+        <Sheet
+          label={setup ? "Choose where exports go" : "Settings"}
+          close={setup ? undefined : () => setSettings(false)}
+        >
           <h2 id="settings-title">
             {setup ? "Choose where exports go" : "Settings"}
           </h2>
@@ -359,129 +438,125 @@ function Picker() {
             </label>
             {!setup && <button onClick={() => setSettings(false)}>Done</button>}
           </div>
-        </section>
+        </Sheet>
       )}
-      <div
-        className="slots"
-        ref={grid}
-        role="group"
-        aria-label="Screenshot slots"
-        onKeyDown={(event) => {
-          if (
-            ![
-              "ArrowLeft",
-              "ArrowRight",
-              "ArrowUp",
-              "ArrowDown",
-              "Home",
-              "End",
-            ].includes(event.key)
-          )
-            return;
-          const buttons = Array.from(
-            grid.current?.querySelectorAll<HTMLButtonElement>(".slot") ?? [],
-          );
-          const current = buttons.indexOf(
-            document.activeElement as HTMLButtonElement,
-          );
-          if (current < 0) return;
-          event.preventDefault();
-          const next =
-            event.key === "Home"
-              ? 0
-              : event.key === "End"
-                ? buttons.length - 1
-                : Math.max(
-                    0,
-                    Math.min(
-                      buttons.length - 1,
-                      current +
-                        (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1),
-                    ),
-                  );
-          buttons[next]?.focus();
-          setSelection(
-            selectSlot(selection, next + 1, {
-              shift: event.shiftKey,
-              toggle: false,
-            }),
-          );
-        }}
-      >
-        {view?.slots.map((entry, index) => {
-          const id = index + 1;
-          const selected = selection.ids.includes(id);
-          return (
-            <button
-              key={id}
-              className={`slot ${entry ? "occupied" : "empty"} ${selected ? "selected" : ""}`}
-              aria-pressed={selected}
-              aria-label={`Slot ${id}, ${entry ? `${entry.width} by ${entry.height} pixels` : "empty"}`}
-              disabled={busy}
-              onContextMenu={(e) => e.preventDefault()}
-              onDragStart={(e) => e.preventDefault()}
-              onPointerDown={(e) => pointerDown(e, id)}
-              onPointerMove={pointerMove}
-              onPointerCancel={() => {
-                press.current = null;
-              }}
-              onPointerUp={(e) => {
-                const start = press.current;
-                if (
-                  start &&
-                  !start.dragged &&
-                  !e.shiftKey &&
-                  !(mac ? e.metaKey : e.ctrlKey)
-                )
-                  setSelection(
-                    selectSlot(selection, id, { shift: false, toggle: false }),
-                  );
-              }}
-              onClick={(e) => {
-                if (e.detail === 0)
-                  setSelection(
-                    selectSlot(selection, id, {
-                      shift: e.shiftKey,
-                      toggle: mac ? e.metaKey : e.ctrlKey,
-                    }),
-                  );
-              }}
-            >
-              <span className="slot-number">{id}</span>
-              {entry ? (
-                <>
-                  {thumbnails[entry.token] ? (
-                    <img
-                      src={thumbnails[entry.token]}
-                      alt=""
-                      draggable={false}
-                    />
-                  ) : (
-                    <span className="thumbnail-loading">
-                      Preview unavailable
-                    </span>
-                  )}
-                  <span className="dimensions">
-                    {entry.width} × {entry.height}
+      <div className="slot-viewport" ref={viewport}>
+        <div
+          className={`slots ${layout.scroll ? "scrolling" : ""} ${dragging ? "dragging" : ""}`}
+          style={{
+            gridTemplateColumns: `repeat(${layout.columns}, ${layout.width}px)`,
+            gridAutoRows: `${layout.height}px`,
+          }}
+          ref={grid}
+          role="group"
+          aria-label="Screenshot slots"
+          onKeyDown={(event) => {
+            if (
+              ![
+                "ArrowLeft",
+                "ArrowRight",
+                "ArrowUp",
+                "ArrowDown",
+                "Home",
+                "End",
+              ].includes(event.key)
+            )
+              return;
+            const buttons = Array.from(
+              grid.current?.querySelectorAll<HTMLButtonElement>(".slot") ?? [],
+            );
+            const current = buttons.indexOf(
+              document.activeElement as HTMLButtonElement,
+            );
+            if (current < 0) return;
+            event.preventDefault();
+            const next = nextSlotIndex(
+              current,
+              event.key,
+              layout.columns,
+              buttons.length,
+            );
+            buttons[next]?.focus();
+            setSelection(
+              selectSlot(selection, next + 1, {
+                shift: event.shiftKey,
+                toggle: false,
+              }),
+            );
+          }}
+        >
+          {view?.slots.map((entry, index) => {
+            const id = index + 1;
+            const selected = selection.ids.includes(id);
+            return (
+              <button
+                key={id}
+                className={`slot ${entry ? "occupied" : "empty"} ${selected ? "selected" : ""}`}
+                title={
+                  entry
+                    ? `Slot ${id} · ${entry.width} × ${entry.height} pixels`
+                    : `Slot ${id} · Select, then Store in Slot`
+                }
+                aria-pressed={selected}
+                aria-label={`Slot ${id}, ${entry ? `${entry.width} by ${entry.height} pixels` : "empty"}`}
+                disabled={busy}
+                onContextMenu={(e) => e.preventDefault()}
+                onDragStart={(e) => e.preventDefault()}
+                onPointerDown={(e) => pointerDown(e, id)}
+                onPointerMove={pointerMove}
+                onPointerCancel={() => {
+                  press.current = null;
+                }}
+                onPointerUp={(e) => {
+                  const start = press.current;
+                  if (
+                    start &&
+                    !start.dragged &&
+                    !e.shiftKey &&
+                    !(mac ? e.metaKey : e.ctrlKey)
+                  )
+                    setSelection(
+                      selectSlot(selection, id, {
+                        shift: false,
+                        toggle: false,
+                      }),
+                    );
+                }}
+                onClick={(e) => {
+                  if (e.detail === 0)
+                    setSelection(
+                      selectSlot(selection, id, {
+                        shift: e.shiftKey,
+                        toggle: mac ? e.metaKey : e.ctrlKey,
+                      }),
+                    );
+                }}
+              >
+                <span className="slot-number">{id}</span>
+                {entry ? (
+                  <>
+                    {thumbnails[entry.token] ? (
+                      <img
+                        src={thumbnails[entry.token]}
+                        alt=""
+                        draggable={false}
+                      />
+                    ) : (
+                      <span className="thumbnail-loading">
+                        Preview unavailable
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="empty-content">
+                    <Icon name="plus" />
                   </span>
-                </>
-              ) : (
-                <span className="empty-content">
-                  <span aria-hidden="true">＋</span>
-                  <span>Empty slot</span>
-                </span>
-              )}
-            </button>
-          );
-        })}
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      {view && view.slots.every((slot) => !slot) && (
-        <p className="empty-hint">
-          Your screenshots, right where you need them.
-          <br />
-          Select an empty slot and capture a region to get started.
-        </p>
-      )}
       <footer className="toolbar">
         <button
           disabled={!ready || setup || !occupied.length}
@@ -499,7 +574,7 @@ function Picker() {
             })
           }
         >
-          <span aria-hidden="true">↓</span> Save
+          <Icon name="save" /> Save
           {occupied.length > 1 ? ` (${occupied.length})` : ""}
         </button>
         <button
@@ -518,36 +593,60 @@ function Picker() {
             })
           }
         >
-          <span aria-hidden="true">⌫</span> Clear
+          <Icon name="clear" /> Clear
         </button>
-        <span className="drag-hint">
+        <span className="selection-count">
           {occupied.length
-            ? `${occupied.length} selected · Drag to another app`
-            : "Select · Shift range · " +
-              (mac ? "⌘" : "Ctrl") +
-              " multi-select"}
+            ? `${occupied.length} selected`
+            : `${view?.slots.length ?? "…"} ${view?.slots.length === 1 ? "slot" : "slots"}`}
         </span>
-      </footer>
-      <div className="feedback">
-        <p role="status" aria-live="polite">
-          {busy ? "Working… " : ""}
-          {message}
-        </p>
-        {!busy && native && (
+        {view?.warning && (
+          <span className="sr-only" role="alert">
+            {view.warning}
+          </span>
+        )}
+        <span className="sr-only" role="status" aria-live="polite">
+          {busy ? "Working…" : message}
+        </span>
+        {(message || view?.warning || busy) && (
           <button
-            className="retry"
-            onClick={() =>
-              void run(async () => "Slots reloaded; cleanup retried.")
-            }
+            className={`activity ${failure || view?.warning ? "has-error" : ""}`}
+            title={view?.warning ?? message}
+            onClick={() => setDetails(true)}
+            aria-label="Activity details"
           >
-            Reload
+            {busy
+              ? "Working…"
+              : failure || view?.warning
+                ? "Needs attention"
+                : "Details"}
           </button>
         )}
-      </div>
-      {view?.warning && (
-        <p role="alert" className="warning">
-          {view.warning}
-        </p>
+      </footer>
+      {details && (
+        <Sheet label="Activity" close={() => setDetails(false)}>
+          <h2>Activity</h2>
+          <p className="activity-message">{message}</p>
+          {view?.warning && (
+            <p role="alert" className="warning">
+              {view.warning}
+            </p>
+          )}
+          <div className="dialog-actions">
+            {!busy && native && (failure || view?.warning) && (
+              <button
+                onClick={() =>
+                  void run(async () => "Slots reloaded; cleanup retried.")
+                }
+              >
+                Reload
+              </button>
+            )}
+            <button autoFocus onClick={() => setDetails(false)}>
+              Done
+            </button>
+          </div>
+        </Sheet>
       )}
       {confirmation && (
         <Confirm value={confirmation} close={() => setConfirmation(null)} />

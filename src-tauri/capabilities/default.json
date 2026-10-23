@@ -11,6 +11,7 @@
     "allow-resize-slots",
     "allow-save-slots",
     "allow-configure-exports",
-    "allow-drag-slots"
+    "allow-drag-slots",
+    "core:window:allow-start-dragging"
   ]
 }

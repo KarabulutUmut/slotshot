@@ -20,9 +20,10 @@ or cloud services. There are no downloadable releases yet.
 - **Clear / slot count:** permanently delete affected internal PNGs and thumbnails.
   Count reductions involving occupied slots require confirmation. Exported files
   survive replacement, Clear, and count reduction. Cleanup errors remain visible
-  and can be retried with Reload or restart.
+  and can be retried with Reload in Activity details or restart.
 - A compact, dark, resizable Template 1 picker with numbered thumbnails and blue
-  selection. Tab, arrow keys, Home/End, Space/Enter, and modifier selection provide
+  selection. Thumbnail sizes and wrapping respond to both window dimensions;
+  normal quit remembers window size/position. Settings opens as a compact dialog. Tab, arrow keys, Home/End, Space/Enter, and modifier selection provide
   basic keyboard access. Open Slotshot normally to open the picker.
 
 There are no Copy/Paste controls, system clipboard integration, standard paste
@@ -250,7 +251,7 @@ workflows, publish a release, or install an app on your machine.
    Security → Screen & System Audio Recording** if requested. The entry may be
    **Slotshot at `~/Applications/Slotshot.app`**. Use the recovery procedure above
    if an older Slotshot entry is already enabled. Fully quit/reopen after changing it.
-   Drag a region and release; inspect the thumbnail and reported pixel dimensions.
+   Drag a region and release; inspect the thumbnail and its pixel-dimensions tooltip.
 4. Select occupied slot 1 and choose Store again. Cancel replacement confirmation
    and verify no capture begins. Confirm replacement, then cancel capture with
    Escape; the old image must remain. Repeat using the overlay Cancel button.
