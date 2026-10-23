@@ -130,32 +130,55 @@ until those native tests have been observed.
 frontend filesystem/dialog permission is granted. `tempfile` supplies cross-platform
 atomic replacement and private staging files, already present transitively. No new
 npm runtime package is needed; arboard and its unused clipboard dependencies are
-removed. HUD vibrancy on macOS and Acrylic on supported Windows versions remain
-configured defaults. In locked Tauri 2.12.5, the retained `macos-private-api` flag
-is a no-op; Wry 0.57.0 still uses the private WebKit `drawsBackground` KVC key for
-transparency. Removing the flag alone is therefore insufficient for a Mac App
-Store API audit. Native `NSGlassEffectView` and `NSVisualEffectView` themselves
-are public AppKit APIs. OS settings may reduce transparency; window controls/resize
-remain native. No hotkey or tray plugin is added.
+removed.
 
-`material.rs` temporarily exposes two main-window commands for the
-[Task 003B.3 material evaluation](MATERIAL-EVALUATION.md). Native effect changes
-are rejected outside macOS debug builds. The enum accepts only default/A/B/C;
-Tauri's built-in `set_effects` handles main-thread replacement, without a new
-library or generic frontend window-effect grant. A/B include HUD fallback for
-older macOS. Effects and optional synthetic previews live only in memory; normal
-capture windows and all filesystem commands retain their existing boundaries.
-The selector should be removed after a visual choice is approved.
+Task 003B.4 finalizes the user-approved Liquid Glass Regular material. Before native
+window creation, the macOS-only block in `lib.rs` overrides the main window's
+Tauri `WindowEffectsConfig` in both debug and release: `LiquidGlassRegular`, then
+`HudWindow` fallback, active HUD state, radius 12, and RGBA(20,24,32,28) native tint.
+Tauri 2.12.5 applies Regular on macOS 26+ and falls back to HUD on older macOS
+(the HUD material requires 10.14+). `state` does not affect Liquid Glass;
+interactive glass is not enabled. This uses the already-locked transitive
+window-vibrancy 0.8.1 integration, without new libraries or effect IPC permissions.
+The shared configuration and opaque charcoal/navy CSS tint remain unchanged on
+Windows, which requests Acrylic. Only the macOS shell gets the approved lighter
+CSS tint; screenshot images remain unfiltered. The macOS theme stays dark,
+titlebar stays overlay/hidden-title, and native shadows/resize limits are unchanged.
+Native materials respond to Reduce Transparency; CSS additionally uses an opaque
+surface when WebKit reports `prefers-reduced-transparency`. No polling is added.
+The development selector, synthetic previews, temporary commands and grants, and
+separate evaluation document are removed. No screenshot-storage migration occurs.
+
+In locked Tauri 2.12.5, the retained `macos-private-api` flag is a no-op (since
+[Tauri 2.12.1](https://v2.tauri.app/release/tauri/v2.12.1/)); Wry 0.57.0 still uses
+the private WebKit `drawsBackground` KVC key for transparency. Removing the flag
+alone is insufficient for a Mac App Store API audit. Native
+[`NSGlassEffectView`](https://developer.apple.com/documentation/appkit/nsglasseffectview)
+and [`NSVisualEffectView`](https://developer.apple.com/documentation/appkit/nsvisualeffectview)
+are public AppKit APIs; choosing them does not remove that WebView integration risk.
+Mac App Store distribution needs a separate audit and potentially a different
+transparency implementation. Local Apple Development signing is not notarization
+or App Store approval. No hotkey or tray plugin is added.
 
 ## Validation status
 
-Frontend selection tests and Rust lifecycle/path/error tests use synthetic images.
-On macOS 26.6.2, the rebuilt unsigned app was launched and the new picker,
-translucent surface, native folder-dialog cancellation, Pictures setup, Shift/Cmd
-selection, increasing to ten empty slots, returning to five, and restart retention of count/export
-settings were observed. Capture returned the actionable Screen Recording permission
-error and recovered to an enabled picker. Permission was not granted in this session,
-so real captures, occupied-slot GUI workflows, and native file drops remain unverified.
-Windows runtime, display edge cases, receiving-app compatibility, and resource
-measurements also remain unverified. See README’s manual procedure; CI does not
-launch the application.
+Task 003B.4 used only the canonical `~/Applications/Slotshot.app` on macOS 26.6.2,
+rebuilt by `npm run app:test:mac` with the existing Apple Development identity,
+strict bundle verification, and verified executable path. A real 2698 × 1086 PNG
+was captured into empty slot 4 without another permission grant; its full PNG,
+thumbnail, and assignment survived normal quit/reopen. Original occupied assignments,
+PNGs, thumbnails, and settings were unchanged; only the manifest gained the test
+capture. The normal Settings sheet, enabled/disabled actions, native zoom/restore,
+and geometry retention were observed. Regular produced a dark, readable surface
+with Reduce Transparency on; the original off setting was restored. The user
+confirmed enabled and disabled labels were readable over light and dark backgrounds
+on the actual desktop, since isolated automation snapshots cannot establish that.
+
+`npm ci`, frontend check/build (24 tests), Rust formatting, locked Clippy with
+warnings denied, 21 Rust tests, and the locked debug native build passed. The
+removed 22nd Rust test belonged only to the deleted experiment. Storage, capture,
+export, native drag, and selection implementations retain their existing behavior
+and test coverage. No source image or separately exported PNG was replaced/deleted.
+Windows/older-macOS runtime, receiving-app multi-file drag compatibility, display
+hot-plug/mixed-DPI behavior, and controlled performance measurements remain
+unverified in this task. Compilation alone is not native runtime evidence.

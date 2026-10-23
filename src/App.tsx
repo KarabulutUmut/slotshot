@@ -11,8 +11,6 @@ import { captureRegion, type Destination } from "./capture";
 import RegionOverlay from "./RegionOverlay";
 import { selectSlot, type SelectionState } from "./selection";
 import { fitSlots, nextSlotIndex } from "./layout";
-import { MaterialPreview, type Material } from "./MaterialPreview";
-import { sampleThumbnails } from "./materialSamples";
 import "./App.css";
 
 type Entry = { token: string; width: number; height: number };
@@ -124,27 +122,7 @@ function Sheet({
 
 function Picker() {
   const native = isTauri();
-  const [storedView, setView] = useState<SlotView | null>(
-    native ? null : preview,
-  );
-  const [material, setMaterial] = useState<Material>("default");
-  const [samples, setSamples] = useState(false);
-  const [sampleUrls, setSampleUrls] = useState<string[]>([]);
-  const view = samples
-    ? {
-        ...preview,
-        exportDirectory: "Synthetic preview",
-        slots: [0, 1, 2, null, null].map((index) =>
-          index === null
-            ? null
-            : { token: `sample-${index}`, width: 320, height: 240 },
-        ),
-      }
-    : storedView;
-  useEffect(
-    () => () => sampleUrls.forEach((url) => URL.revokeObjectURL(url)),
-    [sampleUrls],
-  );
+  const [view, setView] = useState<SlotView | null>(native ? null : preview);
   const [selection, setSelection] = useState<SelectionState>({
     ids: [],
     anchor: null,
@@ -204,10 +182,10 @@ function Picker() {
   }, [native]);
 
   useEffect(() => {
-    if (!native || !storedView || samples) return;
+    if (!native || !view) return;
     let disposed = false;
     const urls: string[] = [];
-    const entries = storedView.slots;
+    const entries = view.slots;
     void Promise.allSettled(
       entries.map(async (entry, index) => {
         if (!entry) return null;
@@ -241,7 +219,7 @@ function Picker() {
       disposed = true;
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [native, storedView, samples]);
+  }, [native, view]);
 
   const run = async (action: () => Promise<string>) => {
     if (inFlight.current) return;
@@ -267,7 +245,7 @@ function Picker() {
   };
 
   const occupied = selection.ids.filter((id) => view?.slots[id - 1]);
-  const ready = native && !!view && !busy && !samples;
+  const ready = native && !!view && !busy;
   const setup = !!view && !view.exportDirectory;
 
   useEffect(() => {
@@ -375,10 +353,7 @@ function Picker() {
   };
 
   return (
-    <main
-      className={`picker ${native && mac ? "mac-native" : ""}`}
-      data-material={material}
-    >
+    <main className={`picker ${native && mac ? "mac-native" : ""}`}>
       <header className="picker-header" data-tauri-drag-region>
         <h1 className="sr-only">Slotshot</h1>
         <div className="capture-actions">
@@ -463,17 +438,6 @@ function Picker() {
             </label>
             {!setup && <button onClick={() => setSettings(false)}>Done</button>}
           </div>
-          <MaterialPreview
-            mode={material}
-            change={setMaterial}
-            samples={samples}
-            setSamples={(value) => {
-              setSampleUrls(value ? sampleThumbnails() : []);
-              setSamples(value);
-              setSelection({ ids: [], anchor: null });
-            }}
-            disabled={busy}
-          />
         </Sheet>
       )}
       <div className="slot-viewport" ref={viewport}>
@@ -571,13 +535,9 @@ function Picker() {
                 <span className="slot-number">{id}</span>
                 {entry ? (
                   <>
-                    {(
-                      samples ? sampleUrls[id - 1] : thumbnails[entry.token]
-                    ) ? (
+                    {thumbnails[entry.token] ? (
                       <img
-                        src={
-                          samples ? sampleUrls[id - 1] : thumbnails[entry.token]
-                        }
+                        src={thumbnails[entry.token]}
                         alt=""
                         draggable={false}
                       />

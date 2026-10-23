@@ -1,8 +1,6 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
-            "material_preview_enabled",
-            "preview_material",
             "slot_view",
             "slot_thumbnail",
             "clear_slots",

@@ -2,20 +2,43 @@ use tauri::Manager;
 
 mod capture;
 mod export;
-mod material;
 mod region;
 mod slots;
 mod storage;
 mod window;
 
 pub fn run() {
+    let context = tauri::generate_context!();
+    // Configure before native windows are created, in both debug and release.
+    // Keep the shared HUD/Acrylic configuration unchanged on Windows.
+    #[cfg(target_os = "macos")]
+    let context = {
+        use tauri::window::{Color, Effect, EffectState, EffectsBuilder};
+        let mut context = context;
+        if let Some(picker) = context
+            .config_mut()
+            .app
+            .windows
+            .iter_mut()
+            .find(|w| w.label == "main")
+        {
+            picker.window_effects = Some(
+                EffectsBuilder::new()
+                    .effect(Effect::LiquidGlassRegular)
+                    .effect(Effect::HudWindow)
+                    .state(EffectState::Active)
+                    .radius(12.0)
+                    .color(Color(20, 24, 32, 28))
+                    .build(),
+            );
+        }
+        context
+    };
     tauri::Builder::default()
         .manage(capture::CaptureState::default())
         .manage(slots::SlotState::default())
         .manage(window::WindowState::default())
         .invoke_handler(tauri::generate_handler![
-            material::material_preview_enabled,
-            material::preview_material,
             slots::slot_view,
             slots::slot_thumbnail,
             slots::clear_slots,
@@ -52,7 +75,7 @@ pub fn run() {
                 capture::window_closed(window.app_handle(), window.label());
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Slotshot")
         .run(|app, event| {
             if matches!(

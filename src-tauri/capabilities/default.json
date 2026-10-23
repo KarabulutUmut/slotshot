@@ -4,8 +4,6 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
-    "allow-material-preview-enabled",
-    "allow-preview-material",
     "allow-capture-region",
     "allow-slot-view",
     "allow-slot-thumbnail",

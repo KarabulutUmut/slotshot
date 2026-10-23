@@ -47,13 +47,24 @@ the private API use. Mac App Store distribution needs a separate API audit and
 potential transparency changes. Windows uses Acrylic where supported; appearance
 depends on OS and accessibility settings. Window controls and resizing stay native.
 
-Task 003B.3 adds a temporary macOS **Debug** comparison under **Settings →
-Development material comparison**: existing default, Liquid Glass Regular (A),
-Liquid Glass Clear (B), and HUD vibrancy (C). Restart restores the existing default.
-Optional synthetic thumbnails are memory-only and disable screenshot operations
-until switched off. No existing image is altered. See the
-[native material evaluation](docs/MATERIAL-EVALUATION.md) for support, limitations,
-manual comparison steps, and validation still needed before choosing a material.
+Task 003B.4 finalizes the user-approved **Liquid Glass Regular** material on
+macOS 26+, using Tauri's built-in effects, a subtle dark native tint, and a light
+charcoal CSS tint. Older macOS versions request HUD vibrancy; Windows keeps its
+existing Acrylic appearance. Reduce Transparency is respected by native materials
+and an opaque CSS fallback where the media query is supported. The temporary
+material selector, synthetic previews, and their commands/permissions are removed;
+the picker always displays real stored thumbnails. No new dependencies are needed.
+
+Task 003B.4 validation on macOS 26.6.2: the canonical app rebuilt with the same
+Apple Development identity and passed strict signature verification. A real
+2698 × 1086 PNG was stored in previously empty slot 4 without reauthorization,
+then restored with its thumbnail after normal quit/reopen. Existing screenshot
+PNGs, thumbnails, settings, and occupied assignments were unchanged; the manifest
+only gained the test capture. Native zoom/restore and the normal Settings sheet
+worked. Regular remained readable with Reduce Transparency enabled; that OS
+setting was restored off. The user confirmed enabled and disabled labels were
+readable over light and dark desktop backgrounds. Windows and older-macOS runtime,
+receiving-app multi-file drag compatibility, and display edge cases remain unverified.
 
 ## Prerequisites
 

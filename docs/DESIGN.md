@@ -6,10 +6,15 @@ the picker itself, not the surrounding marketing poster.
 
 Keep the compact dark translucent floating surface, rounded thumbnails, restrained
 borders/spacing, numbered slots, blue selection, and fully resizable native window.
-The grid adapts to 1–10 slots and wraps in narrow windows. macOS uses HUD vibrancy;
-Windows requests Acrylic. A charcoal/navy CSS tint lets the native material show
-through; reduced transparency requests use an opaque surface. OS window chrome,
-transparency settings, and material support differ.
+The grid adapts to 1–10 slots and wraps in narrow windows. The user approved
+**A — Liquid Glass Regular** in Task 003B.4 as the final macOS material. macOS 26+
+uses native Regular glass with tint RGBA(20,24,32,28), a 12-point radius, and the
+approved light charcoal shell gradient (13–19% alpha). Earlier macOS versions
+request native HUD vibrancy. Windows retains its existing Acrylic and charcoal/navy
+CSS appearance. No image saturation, content, opacity, layout, or spacing changes
+accompany the material decision. Native materials respect Reduce Transparency;
+the CSS media query also supplies an opaque surface where supported. OS window
+chrome, transparency settings, and material support differ.
 
 The initial content size is 660 × 252 logical pixels, with native limits of
 400 × 200 through 1280 × 720. macOS overlays its native traffic lights on the
@@ -72,8 +77,15 @@ checks. Windows GUI, display hot-plug/mixed-DPI restore, and reduced-transparenc
 appearance remain unverified. Native materials/chrome differ from the reference;
 small windows intentionally scroll only the grid, and few slots stay centered.
 
-Task 003B.3 temporarily compares native Regular/Clear Liquid Glass and HUD with
-lighter shell tints through a macOS debug-only Settings selector. The existing HUD
-and CSS tint remain the startup default. No replacement direction has been approved;
-see [material evaluation](MATERIAL-EVALUATION.md) before choosing or removing the
-comparison controls.
+The Task 003B.3 development material selector, synthetic thumbnail previews, and
+associated native commands/permissions were removed in Task 003B.4. The picker
+always loads real screenshot thumbnails. There is no material preference or test
+mode to persist, and no migration or deletion of existing screenshot data.
+
+Final Task 003B.4 native checks on macOS 26.6.2 confirmed the real-thumbnail picker,
+normal Settings sheet, native zoom/restore and geometry retention, a real capture
+stored in empty slot 4 and restored after restart, and readable Regular glass with
+Reduce Transparency on (restored off afterward). The user confirmed enabled and
+disabled labels over light and dark desktop backgrounds. Windows/older-macOS runtime
+and receiving-app drag compatibility remain unverified; the automated layout and
+selection tests continue to pass.
