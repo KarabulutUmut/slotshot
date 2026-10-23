@@ -3,5 +3,15 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
-  "permissions": ["allow-capture-region"]
+  "permissions": [
+    "allow-capture-region",
+    "allow-slot-view",
+    "allow-slot-thumbnail",
+    "allow-clear-slots",
+    "allow-resize-slots",
+    "allow-save-slots",
+    "allow-configure-exports",
+    "allow-drag-slots",
+    "core:window:allow-start-dragging"
+  ]
 }

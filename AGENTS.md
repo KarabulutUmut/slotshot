@@ -1,11 +1,12 @@
 # Working on Slotshot
 
-- Read README.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, docs/CAPTURE.md, and
-  docs/DESIGN.md before changing behavior. Implement only the requested task.
-- Distinguish implemented behavior from the approved target. Task 002's Copy
-  Region/native clipboard and Pictures-only Save still exist. Task 003A aligns
-  documentation only; Task 003B must replace the legacy flow. Persistent slots,
-  native file drag-out, export settings, and the Template 1 picker remain planned.
+- Read README.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, and docs/DESIGN.md before changing behavior. Implement only the requested task.
+- Use the primary local repository at ~/Developer/Screenshot. Do not create or
+  use additional Git worktrees or isolated project checkouts unless explicitly
+  requested. Develop sequentially through regular feature branches in the primary
+  checkout. If the current execution environment is a separate worktree, stop and
+  request a local-workspace session instead.
+- Develop sequentially with small, meaningful conventional commits.
 - Keep one small React/TypeScript frontend, plain CSS, and a Rust/Tauri backend.
   Prefer direct functions and local state; add abstractions only for real needs.
 - Keep runtime dependencies minimal. Justify new crates, npm packages, plugins,
@@ -49,9 +50,9 @@
   Selected exports multiple slots as separate PNGs. Slot deletion/replacement
   must never delete separately exported screenshots.
 - Native drag-out offers selected PNGs together in one file drag and preserves
-  source files. CrabNebula drag-rs / the Tauri 2 drag plugin is the intended
-  direction, subject to compatibility testing; do not install dependencies until
-  implementation requires them. Test on macOS and Windows, including ChatGPT and
+  source files. CrabNebula drag-rs is used directly from Rust with
+  copy semantics and an operation guard; receiving-app compatibility still needs
+  native testing. Test on macOS and Windows, including ChatGPT and
   common file-accepting apps; never promise universal multi-file drop support.
 - Preserve approved Template 1: compact dark translucent picker, thumbnails,
   slot numbers, blue selection, full resizing, Save/Clear toolbar, and native

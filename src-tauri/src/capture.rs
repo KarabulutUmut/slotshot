@@ -1,15 +1,16 @@
-use std::{
-    borrow::Cow,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-use crate::{export, region::Selection};
+use crate::{
+    export,
+    region::Selection,
+    slots::{self, SlotState},
+};
 
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
@@ -17,7 +18,7 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Destination {
-    Copy,
+    Store,
     Save,
 }
 
@@ -25,7 +26,8 @@ pub enum Destination {
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Outcome {
     Cancelled,
-    Copied {
+    Stored {
+        slot: usize,
         width: u32,
         height: u32,
     },
@@ -76,7 +78,12 @@ fn state_error() -> String {
 fn permission() -> Result<(), String> {
     let access = core_graphics::access::ScreenCaptureAccess;
     if !access.preflight() && !access.request() {
-        return Err("Screen Recording permission is required. Enable Slotshot (or the development host) in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen the app.".into());
+        let executable = std::env::current_exe()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "unknown executable".into());
+        return Err(format!(
+            "Screen Recording access was not granted (preflight=false, request=false); no screenshot was attempted. Running executable: {executable}. Enable the canonical ~/Applications/Slotshot.app in System Settings → Privacy & Security → Screen & System Audio Recording, then fully quit and reopen it. An enabled entry for an older signature may need removal and re-adding; see README."
+        ));
     }
     Ok(())
 }
@@ -114,7 +121,7 @@ fn snapshots() -> Result<Vec<Snapshot>, String> {
             return Err("The connected displays exceed the capture memory limit (64 megapixels). Disconnect a display or lower its resolution.".into());
         }
         let image = monitor.capture_image().map_err(|e| {
-            format!("Screen capture failed: {e}. Check screen permissions and retry.")
+            format!("Screen capture backend failed after the permission check passed: {e}. Retry capture; if it persists, report this backend error separately from a permission denial.")
         })?;
         let (width, height) = image.dimensions();
         total_pixels += u64::from(width) * u64::from(height);
@@ -231,7 +238,12 @@ fn cleanup(app: &AppHandle) {
     state.busy.store(false, Ordering::Release);
 }
 
-async fn capture(app: &AppHandle, destination: Destination) -> Result<Outcome, String> {
+async fn capture(
+    app: &AppHandle,
+    destination: Destination,
+    slot: Option<usize>,
+    revision: u64,
+) -> Result<Outcome, String> {
     let main = app
         .get_webview_window("main")
         .ok_or("Main window is unavailable.")?;
@@ -313,14 +325,7 @@ async fn capture(app: &AppHandle, destination: Destination) -> Result<Outcome, S
                 .nth(index)
                 .ok_or("Display is no longer available.")?;
             // Drop all other display images before decoding the selected display.
-            let pictures = match destination {
-                Destination::Save => Some(
-                    app.path()
-                        .picture_dir()
-                        .map_err(|e| format!("Could not locate your Pictures folder: {e}"))?,
-                ),
-                Destination::Copy => None,
-            };
+            let app = app.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let region = selection.pixels(snapshot.width, snapshot.height)?;
                 let image =
@@ -330,24 +335,17 @@ async fn capture(app: &AppHandle, destination: Destination) -> Result<Outcome, S
                         .into_rgba8();
                 let (width, height) = image.dimensions();
                 match destination {
-                    Destination::Copy => {
-                        arboard::Clipboard::new()
-                            .map_err(|e| format!("Could not open clipboard: {e}"))?
-                            .set_image(arboard::ImageData {
-                                width: width as usize,
-                                height: height as usize,
-                                bytes: Cow::Borrowed(image.as_raw()),
-                            })
-                            .map_err(|e| {
-                                format!(
-                                    "Could not copy image: {e}. The clipboard may be busy; retry."
-                                )
-                            })?;
-                        Ok(Outcome::Copied { width, height })
+                    Destination::Store => {
+                        let slot = slots::with_store(&app, |s| s.assign(slot, revision, &image))?;
+                        Ok(Outcome::Stored {
+                            slot,
+                            width,
+                            height,
+                        })
                     }
                     Destination::Save => {
                         let path = export::save(
-                            &pictures.ok_or("Pictures folder is unavailable.")?,
+                            &slots::with_store(&app, |s| s.export_directory())?,
                             &image,
                         )?;
                         Ok(Outcome::Saved {
@@ -369,10 +367,30 @@ pub async fn capture_region(
     app: AppHandle,
     window: WebviewWindow,
     destination: Destination,
+    slot: Option<usize>,
+    revision: u64,
+    replace: bool,
 ) -> Result<Outcome, String> {
     if window.label() != "main" {
         return Err("Capture must start from the main window.".into());
     }
+    let _operation = app.state::<SlotState>().begin()?;
+    slots::with_store(&app, |s| {
+        match destination {
+            Destination::Store => {
+                let index = s.validate_target(slot, revision)?;
+                if s.view().slots[index].is_some() && !replace {
+                    return Err(
+                        "Confirm replacement before capturing into an occupied slot.".into(),
+                    );
+                }
+            }
+            Destination::Save => {
+                s.export_directory()?;
+            }
+        }
+        Ok(())
+    })?;
     if app
         .state::<CaptureState>()
         .busy
@@ -380,7 +398,7 @@ pub async fn capture_region(
     {
         return Err("A capture is already in progress.".into());
     }
-    let result = capture(&app, destination).await;
+    let result = capture(&app, destination, slot, revision).await;
     cleanup(&app);
     result
 }
