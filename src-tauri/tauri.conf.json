@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "Slotshot",
-        "width": 760,
-        "height": 420,
-        "minWidth": 360,
-        "minHeight": 300,
+        "width": 660,
+        "height": 252,
+        "minWidth": 400,
+        "minHeight": 200,
         "resizable": true,
         "theme": "Dark",
         "backgroundColor": "#00000000",
@@ -26,7 +26,11 @@
           "effects": ["hudWindow", "acrylic"],
           "state": "active",
           "radius": 12
-        }
+        },
+        "maxWidth": 1280,
+        "maxHeight": 720,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
