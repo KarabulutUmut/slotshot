@@ -358,3 +358,38 @@ button.danger {
     background: #414955;
   }
 }
+
+/* Task 003B.3 only: native material below a restrained, translucent shell tint.
+   No opacity/filter on screenshot images or on the webview as a whole. */
+.picker[data-material="regular"],
+.picker[data-material="hud"] {
+  background: linear-gradient(125deg, #181d2620, #11172030);
+}
+.picker[data-material="clear"] {
+  background: linear-gradient(125deg, #151a2340, #10162050);
+}
+.picker:not([data-material="default"]) .selection-count,
+.picker:not([data-material="default"]) .empty .slot-number {
+  color: #d2d8e2;
+}
+.material-preview {
+  margin: 16px 0 0;
+  padding: 12px;
+  border: 1px solid #ffffff26;
+  border-radius: 7px;
+  font-size: 11px;
+}
+.material-preview label {
+  display: block;
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+.material-preview select {
+  max-width: 100%;
+  margin: 6px 0;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .picker[data-material] {
+    background: #202632;
+  }
+}

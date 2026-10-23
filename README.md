@@ -40,10 +40,20 @@ Screen Recording permission. Multi-monitor/mixed-DPI fidelity, Windows runtime,
 and receiving-app drag compatibility require native testing; compilation alone
 is not runtime evidence. Destination apps may accept only one file or reject drops.
 
-The macOS translucent webview requires Tauri’s `macos-private-api` feature; this
-precludes Mac App Store submission without revisiting transparency. Windows uses
-Acrylic where supported; appearance depends on OS and accessibility settings.
-The application keeps normal window controls and OS resizing.
+The macOS translucent webview in the locked Tauri/Wry stack uses a private
+WebKit transparency key. The `macos-private-api` feature/configuration is retained,
+but is a no-op in Tauri 2.12.1 and newer; removing that flag alone does not remove
+the private API use. Mac App Store distribution needs a separate API audit and
+potential transparency changes. Windows uses Acrylic where supported; appearance
+depends on OS and accessibility settings. Window controls and resizing stay native.
+
+Task 003B.3 adds a temporary macOS **Debug** comparison under **Settings →
+Development material comparison**: existing default, Liquid Glass Regular (A),
+Liquid Glass Clear (B), and HUD vibrancy (C). Restart restores the existing default.
+Optional synthetic thumbnails are memory-only and disable screenshot operations
+until switched off. No existing image is altered. See the
+[native material evaluation](docs/MATERIAL-EVALUATION.md) for support, limitations,
+manual comparison steps, and validation still needed before choosing a material.
 
 ## Prerequisites
 

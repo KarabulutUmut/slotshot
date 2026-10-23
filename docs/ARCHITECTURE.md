@@ -130,10 +130,22 @@ until those native tests have been observed.
 frontend filesystem/dialog permission is granted. `tempfile` supplies cross-platform
 atomic replacement and private staging files, already present transitively. No new
 npm runtime package is needed; arboard and its unused clipboard dependencies are
-removed. Tauri’s `macos-private-api` feature enables transparent webviews, with HUD
-vibrancy on macOS and Acrylic on supported Windows versions. It is unsuitable for
-Mac App Store submission without revisiting that choice. OS settings may reduce
-transparency; window controls/resize remain native. No hotkey or tray plugin is added.
+removed. HUD vibrancy on macOS and Acrylic on supported Windows versions remain
+configured defaults. In locked Tauri 2.12.5, the retained `macos-private-api` flag
+is a no-op; Wry 0.57.0 still uses the private WebKit `drawsBackground` KVC key for
+transparency. Removing the flag alone is therefore insufficient for a Mac App
+Store API audit. Native `NSGlassEffectView` and `NSVisualEffectView` themselves
+are public AppKit APIs. OS settings may reduce transparency; window controls/resize
+remain native. No hotkey or tray plugin is added.
+
+`material.rs` temporarily exposes two main-window commands for the
+[Task 003B.3 material evaluation](MATERIAL-EVALUATION.md). Native effect changes
+are rejected outside macOS debug builds. The enum accepts only default/A/B/C;
+Tauri's built-in `set_effects` handles main-thread replacement, without a new
+library or generic frontend window-effect grant. A/B include HUD fallback for
+older macOS. Effects and optional synthetic previews live only in memory; normal
+capture windows and all filesystem commands retain their existing boundaries.
+The selector should be removed after a visual choice is approved.
 
 ## Validation status
 

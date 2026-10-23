@@ -71,3 +71,9 @@ not establish file-drag initiation/transfer; repeat the existing manual receivin
 checks. Windows GUI, display hot-plug/mixed-DPI restore, and reduced-transparency
 appearance remain unverified. Native materials/chrome differ from the reference;
 small windows intentionally scroll only the grid, and few slots stay centered.
+
+Task 003B.3 temporarily compares native Regular/Clear Liquid Glass and HUD with
+lighter shell tints through a macOS debug-only Settings selector. The existing HUD
+and CSS tint remain the startup default. No replacement direction has been approved;
+see [material evaluation](MATERIAL-EVALUATION.md) before choosing or removing the
+comparison controls.

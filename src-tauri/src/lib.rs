@@ -2,6 +2,7 @@ use tauri::Manager;
 
 mod capture;
 mod export;
+mod material;
 mod region;
 mod slots;
 mod storage;
@@ -13,6 +14,8 @@ pub fn run() {
         .manage(slots::SlotState::default())
         .manage(window::WindowState::default())
         .invoke_handler(tauri::generate_handler![
+            material::material_preview_enabled,
+            material::preview_material,
             slots::slot_view,
             slots::slot_thumbnail,
             slots::clear_slots,
