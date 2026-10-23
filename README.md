@@ -120,13 +120,31 @@ there is a ten-second timeout and no force kill. Finish/cancel active captures o
 drags before running the command. Other running Slotshot builds cause an error:
 quit them manually first. Do not launch the old Debug/Release bundles or use
 `tauri dev` for macOS permission testing. Existing Release bundles are untouched;
-previous Debug bundles and replaced canonical apps are retained in adjacent hidden
-`.slotshot-previous-*/Slotshot.app` directories (their paths are printed). Remove
-those backups manually only when no longer needed. An install rename failure
-restores the prior canonical app; a build/signing failure leaves it installed.
-Failed staging bundles are retained in `~/Applications/.slotshot-staging-*` for
-inspection. The script never deletes screenshot slots, preferences, exports, or
-TCC permissions. The unchanged identifier keeps the existing application-data path.
+the reproducible Debug bundle is replaced directly, without archiving it.
+The previous canonical bundle stays temporarily in
+`~/Applications/.slotshot-update/previous/Slotshot.app`. Only after the installed
+replacement passes strict code-signature verification and a native launch check
+is that backup removed, along with the empty update directory. Successful repeated
+runs leave one canonical installed app and no persistent update backups.
+
+A rename, installed-signature, or launch failure restores the prior app after
+normally quitting the failed replacement; the failed staging bundle stays in the
+fixed `.slotshot-update` directory for inspection. If quitting or rollback fails,
+both bundles remain available there/at the canonical path. Build/signing failures
+leave the prior canonical app installed. The script never force-kills an app.
+
+An interrupted update or leftover `.slotshot-update` causes the next run to stop
+before changing bundles; it never sweeps recovery files. Confirm no build or
+alternate Slotshot process is running, inspect the exact staging/recovery paths,
+and restore `previous/Slotshot.app` if the canonical app is missing or unusable.
+Verify the canonical bundle before removing a leftover update directory. An empty
+`src-tauri/target/.app-test-mac-lock` from an interrupted run also requires that
+process check before manual removal. Legacy `.slotshot-previous-*` and
+`.slotshot-staging-*` directories are never automatically swept: inspect their
+contents, ownership, identifier, and process use first. Unknown files and linked
+paths are refused. No screenshot slots, preferences, exports, certificates,
+Keychain identities, or TCC permissions are deleted. The identifier and signing
+identity selection are unchanged, preserving the existing application-data path.
 
 The script selects the sole valid **Apple Development** identity in your keychain.
 Inspect identities with `security find-identity -v -p codesigning`. If there are

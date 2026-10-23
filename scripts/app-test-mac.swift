@@ -17,7 +17,8 @@ func apps() -> [NSRunningApplication] {
     }
 }
 func isCanonical(_ app: NSRunningApplication) -> Bool {
-    app.bundleURL?.standardizedFileURL == canonical
+    app.bundleURL?.standardizedFileURL == canonical &&
+        app.executableURL?.standardizedFileURL == canonical.appendingPathComponent("Contents/MacOS/slotshot")
 }
 func rejectOtherBuilds() {
     for app in apps() where !isCanonical(app) {
@@ -38,6 +39,11 @@ if mode == "stop" {
 } else if mode == "verify" {
     let deadline = Date().addingTimeInterval(10)
     while apps().isEmpty && Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+    // Observe startup briefly before releasing the rollback bundle.
+    let startup = Date().addingTimeInterval(2)
+    while Date() < startup {
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     }
     rejectOtherBuilds()

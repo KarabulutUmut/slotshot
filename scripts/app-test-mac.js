@@ -3,8 +3,10 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
   renameSync,
   rmdirSync,
 } from "node:fs";
@@ -69,26 +71,91 @@ export function assertBundle(path, readIdentifier) {
   }
 }
 
-// Keep previous bundles for manual recovery; never delete an existing app.
-export function archiveBundle(path) {
-  if (!existsSync(path)) return null;
-  const backup = join(
-    mkdtempSync(join(dirname(path), ".slotshot-previous-")),
-    "Slotshot.app",
-  );
-  renameSync(path, backup);
-  console.log(`Previous bundle retained at ${backup}`);
-  return backup;
+// A fixed directory bounds recovery artifacts to one update. Never sweep older
+// random archives or a pre-existing transaction: interruption requires inspection.
+export function beginUpdate(applications) {
+  const stat = lstatSync(applications);
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    realpathSync(applications) !== applications
+  ) {
+    throw new Error(`Refusing a linked application directory: ${applications}`);
+  }
+  const update = join(applications, ".slotshot-update");
+  try {
+    mkdirSync(update, { mode: 0o700 });
+  } catch (error) {
+    throw new Error(
+      `Cannot start update at ${update}: ${error.message}. An interrupted update may contain the last working app in previous/Slotshot.app. Confirm no build is active and inspect it before recovering/removing it; nothing was deleted.`,
+      { cause: error },
+    );
+  }
+  mkdirSync(join(update, "previous"));
+  return update;
 }
 
-export function installBundle(staged, destination, move = renameSync) {
-  const backup = archiveBundle(destination);
+export function removeBundle(path, readIdentifier) {
+  if (realpathSync(dirname(path)) !== dirname(path))
+    throw new Error(`Refusing a linked bundle parent: ${path}`);
+  assertBundle(path, readIdentifier);
+  if (existsSync(path)) rmSync(path, { recursive: true });
+}
+
+export function installBundle(
+  update,
+  destination,
+  readIdentifier,
+  verify,
+  stop,
+  move = renameSync,
+) {
+  // Both paths must be exact children of the same non-linked Applications dir.
+  const applications = dirname(update);
+  if (
+    realpathSync(applications) !== applications ||
+    update !== join(realpathSync(applications), ".slotshot-update") ||
+    destination !== join(realpathSync(applications), "Slotshot.app")
+  ) {
+    throw new Error("Refusing unexpected installation paths.");
+  }
+  if (lstatSync(update).isSymbolicLink())
+    throw new Error("Refusing a linked update directory.");
+  const staged = join(update, "Slotshot.app");
+  const previousDirectory = join(update, "previous");
+  const backup = join(previousDirectory, "Slotshot.app");
+  if (
+    lstatSync(previousDirectory).isSymbolicLink() ||
+    readdirSync(previousDirectory).length !== 0 ||
+    readdirSync(update).some(
+      (name) => !["Slotshot.app", "previous"].includes(name),
+    )
+  ) {
+    throw new Error("Unexpected update contents; inspect before retrying.");
+  }
+  assertBundle(staged, readIdentifier);
+  if (!existsSync(staged)) throw new Error("Missing staged application.");
+  assertBundle(destination, readIdentifier);
+  const hadPrevious = existsSync(destination);
+  if (hadPrevious) renameSync(destination, backup);
   try {
     move(staged, destination);
+    verify(destination);
   } catch (error) {
-    if (backup) renameSync(backup, destination);
+    // If quitting fails, keep both bundles and the transaction for manual recovery.
+    if (existsSync(destination)) {
+      stop();
+      assertBundle(destination, readIdentifier);
+      renameSync(destination, staged);
+    }
+    if (hadPrevious) renameSync(backup, destination);
     throw error;
   }
+  // Cleanup is deliberately outside rollback: a cleanup error must never replace
+  // a successfully verified app. Keep the fixed directory for inspection/retry.
+  removeBundle(backup, readIdentifier);
+  rmdirSync(previousDirectory);
+  rmdirSync(update);
 }
 
 function main() {
@@ -103,12 +170,33 @@ function main() {
     root,
     "src-tauri/target/debug/bundle/macos/Slotshot.app",
   );
-  const readIdentifier = (app) =>
-    run(
+  const readIdentifier = (app) => {
+    for (const [relative, directory] of [
+      ["Contents", true],
+      ["Contents/MacOS", true],
+      ["Contents/Info.plist", false],
+      ["Contents/MacOS/slotshot", false],
+    ]) {
+      const stat = lstatSync(join(app, relative));
+      if (
+        stat.isSymbolicLink() ||
+        (directory ? !stat.isDirectory() : !stat.isFile())
+      )
+        throw new Error(`Unexpected bundle structure: ${app}/${relative}`);
+    }
+    const executable = run(
+      "/usr/libexec/PlistBuddy",
+      ["-c", "Print :CFBundleExecutable", join(app, "Contents/Info.plist")],
+      true,
+    );
+    if (executable !== "slotshot")
+      throw new Error(`Unexpected executable: ${app}`);
+    return run(
       "/usr/libexec/PlistBuddy",
       ["-c", "Print :CFBundleIdentifier", join(app, "Contents/Info.plist")],
       true,
     );
+  };
   const config = JSON.parse(
     readFileSync(join(root, "src-tauri/tauri.conf.json")),
   );
@@ -152,6 +240,7 @@ function main() {
     );
   }
   try {
+    const update = beginUpdate(applications);
     const native = (mode) =>
       run("xcrun", [
         "swift",
@@ -162,7 +251,7 @@ function main() {
       ]);
     // Refuse other builds before touching their bundle or shared storage lock.
     native("stop");
-    archiveBundle(buildApp);
+    removeBundle(buildApp, readIdentifier);
     // Sign explicitly after bundling: no certificate import, notarization, DMG,
     // updater artifact, or inherited release-signing environment is needed.
     const env = { ...process.env };
@@ -200,8 +289,7 @@ function main() {
     assertBundle(buildApp, readIdentifier);
     if (!existsSync(buildApp))
       throw new Error(`Build did not produce ${buildApp}`);
-    const staging = mkdtempSync(join(applications, ".slotshot-staging-"));
-    const staged = join(staging, "Slotshot.app");
+    const staged = join(update, "Slotshot.app");
     run("/usr/bin/ditto", [buildApp, staged]);
     run("/usr/bin/codesign", [
       "--force",
@@ -222,11 +310,18 @@ function main() {
     // A second check catches another build opened while compiling. No force kill.
     native("stop");
     assertBundle(destination, readIdentifier);
-    installBundle(staged, destination);
-    rmdirSync(staging);
-    run("/usr/bin/codesign", ["-dvv", "-r-", destination]);
-    run("/usr/bin/open", ["-a", destination]);
-    native("verify");
+    installBundle(
+      update,
+      destination,
+      readIdentifier,
+      (app) => {
+        run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+        run("/usr/bin/codesign", ["-dvv", "-r-", app]);
+        run("/usr/bin/open", ["-a", app]);
+        native("verify");
+      },
+      () => native("stop"),
+    );
     console.log(
       "Canonical Slotshot launched. Authorize this exact app in Screen & System Audio Recording, then fully quit/reopen if macOS requests it. No TCC settings or screenshot data were reset.",
     );
