@@ -22,7 +22,7 @@ pub enum Destination {
     Save,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Outcome {
     Cancelled,
@@ -220,7 +220,14 @@ async fn create_overlay(
     Ok(())
 }
 
-fn cleanup(app: &AppHandle) {
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PickerVisibility {
+    Hidden,
+    Minimized,
+    Visible,
+}
+
+fn cleanup(app: &AppHandle, visibility: PickerVisibility) {
     let state = app.state::<CaptureState>();
     // Clear state first so Destroyed callbacks cannot cancel the next capture.
     if let Ok(mut session) = state.session.lock() {
@@ -231,9 +238,15 @@ fn cleanup(app: &AppHandle) {
             let _ = window.destroy();
         }
     }
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+    match visibility {
+        PickerVisibility::Visible => crate::desktop::show(app),
+        PickerVisibility::Minimized => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.minimize();
+            }
+        }
+        PickerVisibility::Hidden => {}
     }
     state.busy.store(false, Ordering::Release);
 }
@@ -374,23 +387,47 @@ pub async fn capture_region(
     if window.label() != "main" {
         return Err("Capture must start from the main window.".into());
     }
-    let _operation = app.state::<SlotState>().begin()?;
-    slots::with_store(&app, |s| {
-        match destination {
-            Destination::Store => {
-                let index = s.validate_target(slot, revision)?;
-                if s.view().slots[index].is_some() && !replace {
-                    return Err(
-                        "Confirm replacement before capturing into an occupied slot.".into(),
-                    );
-                }
+    let operation = app.state::<SlotState>().begin()?;
+    run_capture(&app, destination, slot, revision, replace, operation).await
+}
+
+pub fn active(app: &AppHandle) -> bool {
+    app.state::<CaptureState>().busy.load(Ordering::Acquire)
+}
+
+// Both native actions and the restricted main-window command use this path.
+// The operation is acquired before native dispatch, so repeated presses cannot queue captures.
+pub async fn run_capture(
+    app: &AppHandle,
+    destination: Destination,
+    slot: Option<usize>,
+    revision: u64,
+    replace: bool,
+    _operation: slots::Operation,
+) -> Result<Outcome, String> {
+    let main = app
+        .get_webview_window("main")
+        .ok_or("Main window is unavailable.")?;
+    let previous = if !main.is_visible().map_err(|e| e.to_string())? {
+        PickerVisibility::Hidden
+    } else if main.is_minimized().map_err(|e| e.to_string())? {
+        PickerVisibility::Minimized
+    } else {
+        PickerVisibility::Visible
+    };
+    let app_for_validation = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        slots::with_store(&app_for_validation, |s| {
+            // Setup is required for either destination, including native actions.
+            s.export_directory()?;
+            if matches!(destination, Destination::Store) {
+                s.validate_capture_target(slot, revision, replace)?;
             }
-            Destination::Save => {
-                s.export_directory()?;
-            }
-        }
-        Ok(())
-    })?;
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     if app
         .state::<CaptureState>()
         .busy
@@ -398,9 +435,25 @@ pub async fn capture_region(
     {
         return Err("A capture is already in progress.".into());
     }
-    let result = capture(&app, destination, slot, revision).await;
-    cleanup(&app);
+    let result = capture(app, destination, slot, revision).await;
+    cleanup(app, restore_visibility(previous, &result));
     result
+}
+
+fn restore_visibility(
+    previous: PickerVisibility,
+    result: &Result<Outcome, String>,
+) -> PickerVisibility {
+    if matches!(result, Ok(Outcome::Stored { .. })) {
+        PickerVisibility::Visible
+    } else {
+        previous
+    }
+}
+
+pub fn shutdown(app: &AppHandle) {
+    // Exit must release snapshots and destroy all temporary overlays without revealing the picker.
+    cleanup(app, PickerVisibility::Hidden);
 }
 
 #[tauri::command]
@@ -457,6 +510,38 @@ async fn await_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_visibility_restores_on_cancel_failure_and_save_but_store_reveals() {
+        for previous in [
+            PickerVisibility::Hidden,
+            PickerVisibility::Minimized,
+            PickerVisibility::Visible,
+        ] {
+            for result in [
+                Ok(Outcome::Cancelled),
+                Err("Snapshot failed".into()),
+                Ok(Outcome::Saved {
+                    path: "export.png".into(),
+                    width: 10,
+                    height: 10,
+                }),
+            ] {
+                assert_eq!(restore_visibility(previous, &result), previous);
+            }
+            assert_eq!(
+                restore_visibility(
+                    previous,
+                    &Ok(Outcome::Stored {
+                        slot: 1,
+                        width: 10,
+                        height: 10
+                    })
+                ),
+                PickerVisibility::Visible
+            );
+        }
+    }
 
     #[test]
     fn initialization_timeout_recovers_even_when_sender_remains_alive() {

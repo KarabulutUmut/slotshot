@@ -284,6 +284,19 @@ impl Store {
         }
     }
 
+    pub fn validate_capture_target(
+        &self,
+        slot: Option<usize>,
+        revision: u64,
+        replace: bool,
+    ) -> Result<()> {
+        let index = self.validate_target(slot, revision)?;
+        if self.manifest.slots[index].is_some() && !replace {
+            return Err("Confirm replacement before capturing into an occupied slot.".into());
+        }
+        Ok(())
+    }
+
     pub fn assign(
         &mut self,
         slot: Option<usize>,
@@ -463,6 +476,54 @@ mod tests {
             .map(|e| e.unwrap().path())
             .filter(|p| p.extension().is_some_and(|e| e == "png"))
             .collect()
+    }
+
+    #[test]
+    fn background_target_uses_first_empty_and_full_slots_require_explicit_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = open(&temp);
+        store.assign(Some(1), 0, &image(1)).unwrap();
+        store.assign(Some(3), 1, &image(3)).unwrap();
+        assert_eq!(store.validate_target(None, 2).unwrap(), 1);
+        assert!(store.validate_capture_target(Some(1), 2, false).is_err());
+        assert!(store.validate_capture_target(Some(1), 2, true).is_ok());
+        for slot in [2, 4, 5] {
+            store
+                .assign(Some(slot), store.view().revision, &image(2))
+                .unwrap();
+        }
+        let revision = store.view().revision;
+        assert!(
+            store
+                .validate_capture_target(None, revision, false)
+                .unwrap_err()
+                .contains("full")
+        );
+        assert!(
+            store
+                .validate_capture_target(Some(1), revision - 1, true)
+                .is_err()
+        );
+        assert!(
+            store
+                .validate_capture_target(Some(1), revision, false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn direct_capture_export_does_not_change_internal_slots_or_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = open(&temp);
+        store.configure(temp.path().join("exports")).unwrap();
+        store.assign(None, 0, &image(1)).unwrap();
+        let before = fs::read(store.root.join("manifest.json")).unwrap();
+        let sources = store.drag_files(&[1]).unwrap();
+        let exported = crate::export::save(&store.export_directory().unwrap(), &image(2)).unwrap();
+        assert!(exported.is_file());
+        assert_eq!(fs::read(store.root.join("manifest.json")).unwrap(), before);
+        assert_eq!(store.drag_files(&[1]).unwrap(), sources);
+        assert_eq!(files(&store).len(), 2);
     }
 
     #[test]
