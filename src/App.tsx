@@ -1,3 +1,5 @@
+import { listen } from "@tauri-apps/api/event";
+import ShortcutSettings from "./ShortcutSettings";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   useCallback,
@@ -7,7 +9,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import { captureRegion, type Destination } from "./capture";
+import { captureRegion, type Destination, type Outcome } from "./capture";
 import RegionOverlay from "./RegionOverlay";
 import { selectSlot, type SelectionState } from "./selection";
 import { fitSlots, nextSlotIndex } from "./layout";
@@ -20,6 +22,14 @@ type SlotView = {
   exportDirectory: string | null;
   defaultDirectory: string;
   warning: string | null;
+};
+type DesktopView = {
+  sequence: number;
+  busy: boolean;
+  outcome: Outcome | null;
+  message: string | null;
+  error: boolean;
+  settings: boolean;
 };
 type Confirmation = { text: string; action: () => void };
 const preview: SlotView = {
@@ -128,7 +138,11 @@ function Picker() {
     anchor: null,
   });
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setBusy] = useState(false);
+  const [nativeBusy, setNativeBusy] = useState(false);
+  const busy = localBusy || nativeBusy;
+  const desktopSequence = useRef(0);
+  const loadSequence = useRef(0);
   const [settings, setSettings] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [failure, setFailure] = useState(false);
@@ -150,7 +164,9 @@ function Picker() {
 
   const refresh = useCallback(async () => {
     if (!native) return;
+    const sequence = ++loadSequence.current;
     const next = await invoke<SlotView>("slot_view");
+    if (sequence !== loadSequence.current) return;
     setView(next);
     setSelection((current) => ({
       ids: current.ids.filter((id) => id <= next.slots.length),
@@ -164,11 +180,9 @@ function Picker() {
   useEffect(() => {
     if (!native) return;
     let disposed = false;
-    void invoke<SlotView>("slot_view")
-      .then((next) => {
-        if (disposed) return;
-        setView(next);
-        setMessage("");
+    void refresh()
+      .then(() => {
+        if (!disposed && desktopSequence.current === 0) setMessage("");
       })
       .catch((e: unknown) => {
         if (!disposed) {
@@ -178,8 +192,10 @@ function Picker() {
       });
     return () => {
       disposed = true;
+      // Invalidate an in-flight bootstrap read when React tears down this effect.
+      loadSequence.current += 1;
     };
-  }, [native]);
+  }, [native, refresh]);
 
   useEffect(() => {
     if (!native || !view) return;
@@ -220,6 +236,71 @@ function Picker() {
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [native, view]);
+
+  useEffect(() => {
+    if (!native) return;
+    let disposed = false;
+    const apply = (next: DesktopView) => {
+      if (disposed || next.sequence <= desktopSequence.current) return;
+      desktopSequence.current = next.sequence;
+      setNativeBusy(next.busy);
+      if (next.busy) {
+        setSettings(false);
+        setConfirmation(null);
+        setDetails(false);
+      }
+      if (next.settings) setSettings(true);
+      if (next.message) {
+        setMessage(next.message);
+        setFailure(next.error);
+      }
+      if (next.error) {
+        setDetails(true);
+        // Filesystem errors can follow a committed metadata write. Refresh once
+        // so recovery never leaves the picker showing an obsolete assignment.
+        void refresh().catch((e: unknown) =>
+          setMessage(`${next.message ?? ""} ${String(e)}`),
+        );
+      }
+      const outcome = next.outcome;
+      if (outcome?.status === "stored") {
+        setSelection({ ids: [outcome.slot], anchor: outcome.slot });
+        setMessage(
+          `Stored ${outcome.width} × ${outcome.height} PNG in slot ${outcome.slot}.`,
+        );
+        setFailure(false);
+        void refresh().catch((e: unknown) => {
+          setFailure(true);
+          setMessage(String(e));
+        });
+      } else if (outcome?.status === "saved") {
+        setMessage(
+          `Saved ${outcome.width} × ${outcome.height} PNG to ${outcome.path}`,
+        );
+        setFailure(false);
+      } else if (outcome?.status === "cancelled") {
+        setMessage("Capture cancelled.");
+        setFailure(false);
+      }
+    };
+    // Subscribe before reading the snapshot: native actions cannot be lost during bootstrap.
+    const unlisten = listen<DesktopView>("desktop-state", ({ payload }) =>
+      apply(payload),
+    );
+    void unlisten
+      .then(() => invoke<DesktopView>("desktop_view"))
+      .then(apply)
+      .catch((e: unknown) => {
+        if (!disposed) {
+          setMessage(String(e));
+          setFailure(true);
+        }
+      });
+    return () => {
+      disposed = true;
+      void unlisten.then((fn) => fn());
+    };
+  }, [native, refresh]);
 
   const run = async (action: () => Promise<string>) => {
     if (inFlight.current) return;
@@ -392,6 +473,7 @@ function Picker() {
             Exports are separate PNG files. Your slots stay private in
             Slotshot’s local storage.
           </p>
+          <h3>General</h3>
           <div className="folder-path">
             {view.exportDirectory ?? view.defaultDirectory}
           </div>
@@ -436,8 +518,13 @@ function Picker() {
                 ))}
               </select>
             </label>
-            {!setup && <button onClick={() => setSettings(false)}>Done</button>}
           </div>
+          {!setup && native && <ShortcutSettings mac={mac} />}
+          {!setup && (
+            <div className="dialog-actions settings-done">
+              <button onClick={() => setSettings(false)}>Done</button>
+            </div>
+          )}
         </Sheet>
       )}
       <div className="slot-viewport" ref={viewport}>
