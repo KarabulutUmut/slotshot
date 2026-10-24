@@ -61,7 +61,14 @@ Written [product rules](PRODUCT.md) supersede obsolete reference interactions:
 
 Native fidelity and cross-platform behavior require runtime validation; neither
 the reference image nor a successful build establishes receiving-app compatibility.
-Global shortcuts and tray/background operation remain outside Task 003B.
+Task 004 adds General and Shortcuts sections inside the existing scrollable Settings
+sheet. Shortcut rows show native modifier labels, click-to-record state, individual
+Off controls, errors, and Reset shortcuts. Escape cancels recording before closing
+the sheet. The picker dimensions, grid, materials, toolbar, native resizing, and
+selection rules are unchanged. Closing hides the same picker; opening restores its
+selection and geometry. Native menus remain minimal: Open Slotshot, Store in Slot,
+Save to Device, Settings, Quit Slotshot. The macOS crop-corner template icon follows
+system appearance; Windows uses the existing color application icon.
 
 Task 003B.2 native validation used only `~/Applications/Slotshot.app`, rebuilt via
 `npm run app:test:mac` with Apple Development signing and strict bundle verification.

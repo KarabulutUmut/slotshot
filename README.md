@@ -4,7 +4,7 @@ A local screenshot utility for macOS and Windows, built with Tauri 2, Rust,
 React, TypeScript, Vite, and plain CSS. No server, accounts, database, analytics,
 or cloud services. There are no downloadable releases yet.
 
-## Current application — Task 003B
+## Current application — Task 004
 
 - **Store in Slot:** select a numbered slot, then capture a region. With no single
   destination selected, use the first empty slot. Replacing an occupied slot
@@ -23,14 +23,63 @@ or cloud services. There are no downloadable releases yet.
   and can be retried with Reload in Activity details or restart.
 - A compact, dark, resizable Template 1 picker with numbered thumbnails and blue
   selection. Thumbnail sizes and wrapping respond to both window dimensions;
-  normal quit remembers window size/position. Settings opens as a compact dialog. Tab, arrow keys, Home/End, Space/Enter, and modifier selection provide
+  close/hide and normal quit remember window size/position. Settings opens as a compact dialog. Tab, arrow keys, Home/End, Space/Enter, and modifier selection provide
   basic keyboard access. Open Slotshot normally to open the picker.
 
 There are no Copy/Paste controls, system clipboard integration, standard paste
-shortcut interception, thumbnail context menus, or reordering. Global hotkeys,
-tray/background operation, editing, release signing, and distribution remain out of scope.
+shortcut interception, thumbnail context menus, or reordering. Editing, release signing, and distribution remain out of scope.
 See [product rules](docs/PRODUCT.md), [architecture and limitations](docs/ARCHITECTURE.md),
 and [approved design](docs/DESIGN.md).
+
+## Global shortcuts and background operation
+
+Slotshot registers these conservative initial shortcuts independently in Rust:
+
+| Action           | macOS                  | Windows          |
+| ---------------- | ---------------------- | ---------------- |
+| Store in Slot    | Control+Option+Shift+1 | Ctrl+Alt+Shift+1 |
+| Save to Device   | Control+Option+Shift+2 | Ctrl+Alt+Shift+2 |
+| Show/Hide Picker | Control+Option+Shift+3 | Ctrl+Alt+Shift+3 |
+
+Open Settings → Shortcuts, click an assignment, and press a combination. Escape
+or Cancel recording abandons recording; Off disables that action. Reset shortcuts
+restores all three defaults together. Changes persist across restarts. Use at least
+two modifiers including Control or Command with a letter, number, or function key.
+Standard editing/quit keys and known OS screenshot/session combinations are rejected;
+Windows-key combinations are reserved on Windows. Keys refer to physical positions,
+so labels can differ from the character produced by a non-US keyboard layout.
+macOS supports F1–F20; Windows reserves F12 for its debugger.
+
+Duplicate assignments are rejected. If the OS reports a registration conflict,
+Slotshot retains the previous assignment and explains the error. On macOS the OS
+can accept combinations shared by other apps without reporting a conflict; Settings
+explains this limitation. Choose an unused combination if another app responds or
+Slotshot does not receive it. Slotshot does not claim exclusive ownership or suppress
+other apps' shared shortcuts. A reported startup conflict
+marks just that shortcut unavailable; the others and tray actions continue working.
+OS-reserved/user-customized shortcuts and third-party tools vary: no default can be
+guaranteed available on every machine. Release and press again after changing a key.
+
+The macOS menu bar has a monochrome template icon that follows system appearance;
+click it for the minimal native menu. On Windows, left click the notification icon
+to open the picker and right click for its menu. Both menus offer Open Slotshot,
+Store in Slot, Save to Device, Settings, and Quit Slotshot, with shortcut labels.
+Closing the picker hides it; shortcuts and the tray remain active. Explicit Quit
+(and Cmd+Q on macOS) exits. Minimize remains native. Dock/taskbar behavior is retained.
+A normal launch shows the picker; reopening focuses the existing instance without
+reloading slots. An explicit `--background` launch starts with the picker hidden.
+No launch-at-login behavior is installed.
+
+Native shortcut/tray captures always use the first empty slot, regardless of picker
+selection. If all slots are full, the picker explains how to select a destination
+and explicitly confirm replacement using Store in Slot. A successful Store reveals
+the picker with its new slot selected. Save to Device changes no slot and remains
+hidden when started hidden. Escape/failure restores the previous visibility and
+minimized state. All
+entry points use the same frozen capture engine, operation lease, and revision
+validation. Repeated hotkeys, picker toggles, reopen, and tray actions are ignored
+while another operation owns the lease; Quit remains available. Incomplete first-run
+export setup opens the existing setup sheet instead of capturing.
 
 ## Native validation and limitations
 
@@ -65,6 +114,19 @@ worked. Regular remained readable with Reduce Transparency enabled; that OS
 setting was restored off. The user confirmed enabled and disabled labels were
 readable over light and dark desktop backgrounds. Windows and older-macOS runtime,
 receiving-app multi-file drag compatibility, and display edge cases remain unverified.
+
+Task 004 local validation: 34 frontend tests, 32 Rust tests, formatting, locked
+Clippy, frontend/native builds and the canonical signed workflow passed. Physical
+background Store/full-slot handling, picker toggle, and the menu bar icon were
+confirmed by the user. A real Save to Device PNG completed without slot changes;
+Escape cleanup, Cmd+Q, close-to-background and second launch were exercised.
+Existing screenshots, manifest and export settings were preserved; defaults were
+restored after testing. Final Debug main-process spot measurements were 0.0%
+reported CPU and approximately 102 MiB RSS visible / 104 MiB hidden, excluding
+separate WebKit helper processes. Hiding retains the webview and thumbnails.
+See [validation details and remaining native checks](docs/ARCHITECTURE.md#task-004-validation).
+Windows runtime and macOS shared-shortcut conflict detection remain limitations;
+CI compilation does not prove native behavior.
 
 ## Prerequisites
 
