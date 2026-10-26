@@ -4,11 +4,12 @@ A local screenshot utility for macOS and Windows, built with Tauri 2, Rust,
 React, TypeScript, Vite, and plain CSS. No server, accounts, database, analytics,
 or cloud services. There are no downloadable releases yet.
 
-## Current application — Task 004
+## Current application — Task 004.1
 
-- **Store in Slot:** select a numbered slot, then capture a region. With no single
-  destination selected, use the first empty slot. Replacing an occupied slot
-  requires confirmation; cancelling capture keeps the previous image.
+- **Store in Slot:** capture a region first, then click any numbered slot in the
+  existing picker’s **Choose a slot** mode. One click immediately replaces an
+  occupied slot without confirmation. Keys 1–9 choose slots; 0 chooses slot 10.
+  Escape before selection or before choosing a destination cancels without changes.
 - **Persistent picker:** 1–10 slots (default 5), full-resolution PNGs and bounded
   thumbnails in OS application data. Restart restores assignments and settings.
 - **Native file drag:** click to select, Shift for a range, Cmd on macOS / Ctrl on
@@ -70,21 +71,20 @@ A normal launch shows the picker; reopening focuses the existing instance withou
 reloading slots. An explicit `--background` launch starts with the picker hidden.
 No launch-at-login behavior is installed.
 
-Native shortcut/tray captures always use the first empty slot, regardless of picker
-selection. If all slots are full, the picker explains how to select a destination
-and explicitly confirm replacement using Store in Slot. A successful Store reveals
-the picker with its new slot selected. Save to Device changes no slot and remains
-hidden when started hidden. Escape/failure restores the previous visibility and
-minimized state. All
-entry points use the same frozen capture engine, operation lease, and revision
-validation. Repeated hotkeys, picker toggles, reopen, and tray actions are ignored
-while another operation owns the lease; Quit remains available. Incomplete first-run
-export setup opens the existing setup sheet instead of capturing.
+Shortcut, tray, and button captures share the same capture-first workflow, even
+when every slot is occupied. Store reveals the existing picker for destination
+selection, then selects the committed slot. Save to Device changes no slot and
+remains hidden when started hidden. Escape/failure restores the previous visible,
+hidden, or minimized state. All entry points share an operation lease and storage
+revision validation. Repeated actions cannot queue captures or commit a destination
+twice. First-run export setup still precedes capturing.
 
 ## Native validation and limitations
 
-Capture uses a frozen snapshot before selection overlays open; Escape or Cancel
-abandons the capture. Regions stay on their originating display. macOS requires
+Transparent region overlays appear over the live desktop before screen acquisition.
+On release, every overlay is hidden on the native UI thread, then XCap captures
+only the selected rectangle at native resolution. No screen images are cached.
+Regions stay on their originating display; content is sampled at release time. macOS requires
 Screen Recording permission. Multi-monitor/mixed-DPI fidelity, Windows runtime,
 and receiving-app drag compatibility require native testing; compilation alone
 is not runtime evidence. Destination apps may accept only one file or reject drops.
@@ -127,6 +127,14 @@ separate WebKit helper processes. Hiding retains the webview and thumbnails.
 See [validation details and remaining native checks](docs/ARCHITECTURE.md#task-004-validation).
 Windows runtime and macOS shared-shortcut conflict detection remain limitations;
 CI compilation does not prove native behavior.
+
+Task 004.1 signed macOS measurements: 20 warm Save to Device captures improved
+from **2,424 ms median / 2,441 ms p95** to **67 ms / 92 ms** from native command
+receipt to visible, focused, painted input readiness. First capture after launch:
+2,452 ms before / 56 ms after (overlays prewarm at launch). Two physical hotkey
+samples measured 78 ms and 47 ms. The user confirmed fast shortcut/tray selection
+and slot clicking. See [measurement method, resource impact, and remaining checks](docs/CAPTURE_PERFORMANCE.md).
+Clear and occupied slot-count reduction retain their existing confirmations.
 
 ## Prerequisites
 
@@ -347,16 +355,15 @@ workflows, publish a release, or install an app on your machine.
 2. On first run, choose **Use Pictures** or **Choose Folder…**. Cancel the folder
    dialog once and verify setup stays open. Open Settings, change folder, and
    change the slot count from 5 to 10 and back while empty.
-3. Prepare non-private colored shapes/text in another window. Select empty slot 1,
-   click **Store in Slot**, and grant permission in **System Settings → Privacy &
-   Security → Screen & System Audio Recording** if requested. The entry may be
-   **Slotshot at `~/Applications/Slotshot.app`**. Use the recovery procedure above
-   if an older Slotshot entry is already enabled. Fully quit/reopen after changing it.
-   Drag a region and release; inspect the thumbnail and its pixel-dimensions tooltip.
-4. Select occupied slot 1 and choose Store again. Cancel replacement confirmation
-   and verify no capture begins. Confirm replacement, then cancel capture with
-   Escape; the old image must remain. Repeat using the overlay Cancel button.
-   Complete replacement and verify the old internal PNG/thumbnail are removed.
+3. Prepare non-private colored shapes/text in another window. Click **Store in
+   Slot**, drag a region and release, then click an empty slot in **Choose a slot**.
+   Grant Screen Recording access to the canonical app if requested; follow the
+   recovery procedure above for an older grant. Inspect pixel dimensions/sharpness.
+4. Start Store again with every slot occupied. Escape during region selection,
+   then repeat and Escape during destination selection; existing files must remain.
+   Repeat using Cancel. Complete capture and click an occupied disposable test slot
+   once: no confirmation or second click. Verify its previous PNG/thumbnail are
+   deleted after commit. Test keys 1–9, 0 for slot 10, arrows and Enter/Space.
 5. Populate slots 2 and 5. Test plain click, Shift ranges in both directions,
    Cmd individual toggles, dragging an already selected group, and keyboard access.
    Resize narrow/wide; verify every configured slot and both toolbar buttons remain
@@ -378,7 +385,7 @@ workflows, publish a release, or install an app on your machine.
    Never use personal/private captures for destructive failure tests.
 10. Repeat reversed drags and edge captures on Retina/external displays, including
     displays above/left of primary and mixed scaling. A 100-point region on a 2×
-    snapshot should be 200 pixels. Inspect for clipping or captured overlay UI.
+    capture should be 200 pixels. Inspect for clipping or captured overlay UI.
     Reconfigure displays only between captures. Check recovery after closing an overlay.
 11. In a disposable account/folder, test unavailable/unwritable exports, disk/write
     errors, interrupted writes, and cleanup retry. Errors must be visible, existing

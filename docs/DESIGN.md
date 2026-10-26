@@ -44,13 +44,18 @@ Written [product rules](PRODUCT.md) supersede obsolete reference interactions:
   toggles individuals. Dragging a selected occupied thumbnail preserves the group
   and offers selected occupied PNGs together, with source-preserving copy semantics.
 - Empty numbered slots use a dashed frame and centered plus, without a text label.
-  Select one and use Store in Slot to populate it. No thumbnail context menus or
+  Capture with Store in Slot, then choose one to populate it. No thumbnail context menus or
   reordering. Preview images crop with object-fit: cover; storage, exports, and
   drag retain original resolution/aspect ratio. Small top-left badges label slots;
   original dimensions are available in the hover tooltip and accessible label.
 - Visible focus, descriptive button labels, Tab, arrows/Home/End, and Space/Enter
-  support keyboard use. Confirmation dialogs handle Escape/cancellation and keep
-  destructive actions explicit. Counts/revisions are also validated in Rust.
+  support keyboard use. **Choose a slot** replaces header capture actions with a
+  clear mode label and Cancel in the same picker. Clicking any slot commits once,
+  including occupied slots, without confirmation. Keys 1–9 and 0 for slot 10 choose
+  directly; arrows move focus and Enter/Space commits. Escape cancels. Normal
+  multi-selection and drag-out are disabled during destination selection; Save,
+  Clear, and Settings stay disabled. Existing Clear/count-reduction confirmations
+  remain. Counts, session IDs, and revisions are validated in Rust.
 - Settings is a modal sheet, so changing preferences never displaces the grid.
   Capture controls stay quiet in the header; Save/Clear sit immediately under the
   grid. A compact selection count replaces permanent gesture instructions.

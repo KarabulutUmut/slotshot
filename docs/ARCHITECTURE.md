@@ -9,8 +9,10 @@ No server, database, application network client, accounts, analytics, or cloud.
 - `src/App.tsx`: primary picker, setup/settings, confirmations, and action results.
   `selection.ts` holds tested click/range/toggle rules. React retains metadata and
   bounded thumbnail Blob URLs, never every full-resolution PNG. URLs are revoked.
-- `capture.rs` / `RegionOverlay.tsx`: on-demand frozen snapshots and temporary
-  selection webviews; `region.rs` validates normalized coordinates/pixel conversion.
+- `capture.rs` / `RegionOverlay.tsx`: live transparent selection, reused hidden
+  overlay webviews, selected-region acquisition and an in-memory pending destination.
+  `region.rs` validates normalized coordinates and native coordinate conversion.
+- `timing.rs`: opt-in monotonic stage timings with no screenshot/application data.
 - `storage.rs`: versioned metadata, immutable PNG generations, thumbnails,
   settings, cleanup/recovery, collision-safe exports, and input/path validation.
 - `slots.rs`: window-restricted commands, blocking filesystem workers, native
@@ -21,8 +23,9 @@ No server, database, application network client, accounts, analytics, or cloud.
   or operations change.
 
 The main window can request capture, slot views/thumbnails, Clear/count changes,
-exports, configuration, and drag. Overlay windows receive only their own snapshot,
-readiness, finish, and cancel commands. Rust repeats window/slot/revision checks.
+exports, configuration, and drag. Overlay windows receive only activation events,
+readiness, input timing, finish, and cancel commands; screenshot bytes never enter
+an overlay. Only the main window may choose a pending capture destination. Rust repeats window/slot/revision checks.
 `build.rs` generates command ACLs; there are no general filesystem, clipboard,
 shell, or drag-plugin grants. The frontend supplies slot IDs, never source paths.
 Only the native folder dialog can choose a custom export path. CSP permits local
@@ -88,19 +91,45 @@ checks and AppKit window levels are platform-gated. `image` handles PNG/cropping
 `serde`/`serde_json` provide typed metadata/IPC; Tokio’s time feature bounds overlay
 initialization on Tauri’s existing runtime.
 
-Capture hides the picker, waits once for 150 ms, then snapshots every display
-sequentially before creating any overlay. A display-specific binary IPC response
-becomes a temporary Blob URL. Overlays appear after all images report readiness;
-a 15-second initialization deadline recovers bootstrap failures. Selection has no
-timeout; Escape, Cancel, or closing an overlay releases the session. Snapshots
-stay in memory until success/cancellation/error; only the final destination writes.
+Selection precedes capture. Startup prewarms one hidden transparent WebView per
+connected display without requesting screen permission or acquiring pixels.
+Each capture enumerates only geometry, aligns/reuses those windows, removes
+windows for disconnected displays, shows/focuses them, and sends a fresh session ID.
+The event listener resets the selector and acknowledges visible input readiness
+after two animation frames. Cold/new display initialization has a 15-second bound.
+No fixed settling delay, full-display snapshot, PNG IPC, or image decoding gates
+selection. There are no idle timers or retained screenshot buffers.
 
-One session accepts at most 16 displays and 64 megapixels total (256 MiB RGBA before
-encoding, not a peak-memory claim). Rust crops original pixels using normalized
-selection fractions, independent of webview devicePixelRatio. macOS uses desktop
-points; Windows uses physical bounds, including negative origins. Windows movement
-and final sizing run together on the main thread and verify resulting bounds to
-avoid DPI transition stretching. Regions stay on the originating display; no stitching.
+On pointer release, all overlay hide operations complete on the native UI thread;
+visibility is checked before capture. Overlays also request content protection.
+A worker checks permission and revalidates the chosen monitor’s identity/geometry,
+then calls locked XCap 0.9.8 `capture_region`. macOS arguments are display-local
+points (XCap/Core Graphics returns native Retina pixels); Windows uses physical
+pixels and the existing GDI region path. Outward rounding preserves edges. Windows
+move/size remains in one main-thread callback, including DPI/bounds verification.
+Capture aborts if display geometry changes during selection. Regions cannot stitch
+across displays. One session supports at most 16 displays and one selected region
+of at most 64 megapixels; this bounds image sizes, not peak process memory.
+
+Only that region is encoded, once. Save writes the encoded PNG independently.
+Store retains its RGBA/PNG in one Rust future, reveals **Choose a slot** in the
+same picker and awaits a main-window-only choice. The operation lease spans the
+whole future. Session ID, phase, submitted flag, configured count, and revision
+reject stale/duplicate commits. No automatic destination or overwrite authorization
+flag remains. Atomic staged writes are synced and stream-verified against the
+encoder output before committing; PNG dimensions are validated. Metadata commits
+before obsolete PNG/thumbnail cleanup. Pre-commit failures retain the old assignment;
+post-commit cleanup errors follow the existing visible retry path.
+
+Cancellation/quit/crash leaves no pending screenshot file. Failed commits can leave
+only managed unreferenced generations/stages, bounded by reconciliation before the
+next assignment and swept on Reload/startup. Separate exports are never swept.
+See [measured performance and native validation](CAPTURE_PERFORMANCE.md). Apple’s
+[SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager)
+and `SCStreamConfiguration.sourceRect` offer a modern screenshot path, but do not
+address the measured preselection PNG bottleneck. Retaining XCap’s existing region
+API avoids new bindings, dependencies and a new minimum macOS version in this task;
+Core Graphics deprecation remains a future compatibility limitation.
 
 Reconfigure displays between captures. Mirroring, fullscreen Spaces, virtual desktops,
 HDR/profiles, protected content, remote desktops, rotated/mixed-DPI displays, and
@@ -203,25 +232,20 @@ the same guarded open action. The OS file lock remains a separate storage safety
 boundary. `--background` sets initial visibility before native window creation;
 ordinary launch shows the picker. No autostart dependency or setting is installed.
 
-Native capture acquires the same operation lease synchronously before asynchronous
-dispatch, so repeated presses cannot queue captures, conflict with native drag,
-change settings, or show the picker over active overlays. Preparation loads current
-metadata, checks setup, and validates the first empty slot. Full-slot/setup failures
-show the existing picker instructions/setup. The restricted `capture_region` command
-still accepts only the main window; overlays retain their previous command scope.
-Both native and frontend entry points call `run_capture`, which repeats destination,
-replacement confirmation, and revision validation and uses the existing capture
-engine. No native action supplies replacement authorization.
+Native capture acquires the operation lease synchronously before asynchronous
+dispatch. Preparation checks export setup only, independent of slot occupancy or
+normal multi-selection. Both native and frontend entry points use `run_capture`
+and the same pending-destination flow. Native completion publishes a Rust-owned,
+sequence-numbered result plus a targeted `desktop-state` event; React subscribes
+then reads the current snapshot so completions are not lost during bootstrap.
 
-Cleanup drops snapshots/session data and destroys every temporary overlay. It
-restores prior hidden/visible/minimized state on cancellation/failure/Save; successful Store reveals
-the new selection. A Rust-owned sequence-numbered result snapshot plus a targeted
-`desktop-state` event lets React subscribe then read current state without losing
-native completions during bootstrap. Successful Store and native errors refresh slot metadata and thumbnails once
-(errors can follow a committed filesystem change). Hidden Save and open/toggle do
-not reread screenshot content. A request sequence rejects stale bootstrap responses.
-Main-only event listen/unlisten permissions are added; emit, general filesystem,
-global-shortcut plugin, tray, shell, and arbitrary-window grants are not added.
+Cleanup drops session/pending pixels and hides the pooled overlays. Store success
+reveals/selects the committed slot; cancellation/failure and Save restore the prior
+hidden/visible/minimized state. Explicit quit destroys overlays. Source mutations,
+settings, exports, native drags and further captures remain excluded by the lease.
+Main-only destination commands replace the obsolete snapshot command/grant. Overlay
+event listen/unlisten permits native activation; general filesystem, arbitrary
+window, emit, shortcut-plugin, tray and shell permissions are not granted.
 
 The two new Rust plugins provide OS hotkey registration and second-launch IPC;
 Tauri's `tray-icon` feature uses its already-locked tray/menu libraries. Cargo.lock

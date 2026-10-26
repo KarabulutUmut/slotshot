@@ -1,6 +1,6 @@
 # Slotshot product requirements
 
-Task 004 extends the file-based workflow with native global shortcuts and background operation.
+Task 004.1 refines capture performance and destination selection; Task 004 extends the file-based workflow with native global shortcuts and background operation.
 Native compatibility still requires the runtime validation in [README](../README.md).
 Slotshot stays local-only: no server, accounts, database, analytics, or cloud storage.
 
@@ -8,12 +8,16 @@ Slotshot stays local-only: no server, accounts, database, analytics, or cloud st
 
 1. Choose an export directory during first-run setup, offering OS Pictures as the
    default. Settings changes the directory and slot count (1–10, default 5).
-2. **Store in Slot** captures into the selected single slot, or the first empty
-   slot if there is no single selection. Explicitly confirm occupied replacement.
-   Each slot stores one full-resolution PNG and a generated thumbnail.
+2. **Store in Slot** starts region selection regardless of slot occupancy. After
+   release, the existing picker enters **Choose a slot** mode. One click on any
+   configured slot stores/replaces immediately, with no confirmation or automatic
+   assignment. Keys 1–9 and 0 (slot 10), or focused Enter/Space, choose a destination.
+   Escape cancels the pending screenshot. Each slot stores one full-resolution PNG
+   and a generated thumbnail. Ordinary selection/dragging never replaces content.
 3. **Save to Device** captures directly to the configured export folder without
-   changing slots. Both destinations reuse frozen native region capture; Escape
-   or Cancel preserves existing files. No cross-display stitching.
+   changing slots. Both destinations select over the live desktop, hide every
+   overlay, then capture only the chosen rectangle. Escape or Cancel preserves
+   existing files. No cross-display stitching or frozen-background capture.
 4. Select with click, Shift ranges, or Cmd (macOS) / Ctrl (Windows) individual
    toggles. Dragging an already selected occupied thumbnail preserves the group
    and starts one native file drag for all selected occupied PNGs. Empty slots
@@ -63,13 +67,19 @@ registration. Failed reassignment retains the previous preference and restores
 registrations; exceptional OS rollback errors are reported. One unavailable default
 must not disable the other actions. Preferences live locally across restarts.
 
-Native captures use an empty slot only, including when the picker is visible.
-Full slots reveal instructions to select and explicitly confirm replacement in the
-picker. Successful Store reveals/selects the new slot; background Save leaves the
-picker hidden and changes no slots. Cancellation/failure restores prior visibility.
-First-run export setup precedes either capture destination. All capture entry points
-share one engine and operation lease. Repeated actions cannot queue captures or
-raise the picker over overlays.
+Native and button captures share the capture-first destination mode. Successful
+Store reveals/selects the committed slot; background Save leaves the picker hidden
+and changes no slots. Cancellation/failure restores prior visibility. First-run
+export setup precedes either destination. One operation lease protects the whole
+selection, pending screenshot, and commit: repeated actions cannot queue captures,
+raise the picker over overlays, or choose a destination twice. Pending pixels live
+only in bounded Rust memory and disappear on cancellation, quit, or crash.
+
+Region selection is performance-critical: target warm input readiness below 300 ms
+and p95 below 500 ms where practical. Measure at least 20 warm captures separately
+from first capture after launch; report actual results and platform limits in
+[the capture performance record](CAPTURE_PERFORMANCE.md). No continuous recording,
+background screenshot acquisition, polling, or full-display screenshot caching.
 
 Closing hides the picker; explicit Quit terminates Slotshot. Native minimize stays
 unchanged. Ordinary launch shows the picker; `--background` starts hidden. A second
