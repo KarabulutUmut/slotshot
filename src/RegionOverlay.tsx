@@ -1,15 +1,15 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import {
   cancelRegion,
   finishRegion,
   regionReady,
-  regionSnapshot,
+  regionInteractive,
 } from "./capture";
-
 type Point = { x: number; y: number };
 
 export default function RegionOverlay() {
-  const [source, setSource] = useState<string>();
+  const capture = useRef<number | null>(null);
   const [start, setStart] = useState<Point>();
   const [end, setEnd] = useState<Point>();
   const [message, setMessage] = useState(
@@ -19,26 +19,49 @@ export default function RegionOverlay() {
 
   useEffect(() => {
     let active = true;
-    let url: string | undefined;
-    regionSnapshot()
-      .then((bytes) => {
-        if (!active) return;
-        url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
-        setSource(url);
-      })
-      .catch(() => {
-        if (active) void cancelRegion(true);
+    let frame = 0;
+    let nextFrame = 0;
+    const unlisten = listen<number>("region-activate", ({ payload }) => {
+      if (!active) return;
+      capture.current = payload;
+      submitting.current = false;
+      setStart(undefined);
+      setEnd(undefined);
+      setMessage(
+        "Drag a rectangle on this display. Escape cancels. Regions stay on one display.",
+      );
+      // Acknowledge input readiness after the reset has painted in the visible window.
+      frame = requestAnimationFrame(() => {
+        nextFrame = requestAnimationFrame(() => {
+          if (active && capture.current === payload)
+            void regionInteractive(payload).catch(() => {});
+        });
       });
+    });
+    void unlisten
+      .then(() => {
+        if (active) return regionReady();
+      })
+      .catch(() => {});
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (
+        event.key === "Escape" &&
+        capture.current !== null &&
+        !submitting.current
+      ) {
         event.preventDefault();
-        void cancelRegion().catch(() => {});
+        submitting.current = true;
+        void cancelRegion(capture.current).catch(() => {
+          submitting.current = false;
+        });
       }
     };
     window.addEventListener("keydown", keydown);
     return () => {
       active = false;
-      if (url) URL.revokeObjectURL(url);
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(nextFrame);
+      void unlisten.then((fn) => fn());
       window.removeEventListener("keydown", keydown);
     };
   }, []);
@@ -52,7 +75,7 @@ export default function RegionOverlay() {
   };
 
   const finish = async (event: PointerEvent<HTMLDivElement>) => {
-    if (!start || submitting.current) return;
+    if (!start || submitting.current || capture.current === null) return;
     const last = point(event);
     setEnd(last);
     event.currentTarget.releasePointerCapture(event.pointerId);
@@ -66,7 +89,12 @@ export default function RegionOverlay() {
     }
     submitting.current = true;
     try {
-      await finishRegion({ x1: start.x, y1: start.y, x2: last.x, y2: last.y });
+      await finishRegion(capture.current, {
+        x1: start.x,
+        y1: start.y,
+        x2: last.x,
+        y2: last.y,
+      });
     } catch (error) {
       submitting.current = false;
       setStart(undefined);
@@ -80,7 +108,12 @@ export default function RegionOverlay() {
       className="region-overlay"
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => {
-        if (event.button !== 0 || submitting.current || !source) return;
+        if (
+          event.button !== 0 ||
+          submitting.current ||
+          capture.current === null
+        )
+          return;
         event.currentTarget.setPointerCapture(event.pointerId);
         const first = point(event);
         setStart(first);
@@ -95,18 +128,6 @@ export default function RegionOverlay() {
         setEnd(undefined);
       }}
     >
-      {source && (
-        <img
-          className="region-snapshot"
-          src={source}
-          alt="Display snapshot for region selection"
-          draggable={false}
-          onLoad={() => {
-            void regionReady().catch(() => cancelRegion(true));
-          }}
-          onError={() => void cancelRegion(true)}
-        />
-      )}
       {start && end ? (
         <div
           className="region-boundary"
@@ -127,7 +148,14 @@ export default function RegionOverlay() {
         className="region-cancel"
         onPointerDown={(event) => event.stopPropagation()}
         onPointerUp={(event) => event.stopPropagation()}
-        onClick={() => void cancelRegion().catch(() => {})}
+        onClick={() => {
+          if (capture.current !== null && !submitting.current) {
+            submitting.current = true;
+            void cancelRegion(capture.current).catch(() => {
+              submitting.current = false;
+            });
+          }
+        }}
       >
         Cancel
       </button>

@@ -26,3 +26,10 @@ export function selectSlot(
   if (preserveGroup && current.ids.includes(id)) return current;
   return { anchor: id, ids: [id] };
 }
+
+/** Destination shortcuts are active only while a pending capture owns the picker. */
+export function destinationSlot(key: string, count: number): number | null {
+  if (!/^[0-9]$/.test(key)) return null;
+  const id = key === "0" ? 10 : Number(key);
+  return id <= count ? id : null;
+}

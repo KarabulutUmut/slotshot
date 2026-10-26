@@ -1,31 +1,35 @@
-use std::sync::{
-    Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
-};
-
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-
 use crate::{
     export,
     region::Selection,
     slots::{self, SlotState},
+    timing::Timing,
 };
-
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashSet,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
-
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Destination {
     Store,
     Save,
 }
-
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Outcome {
     Cancelled,
+    Choosing {
+        capture: u64,
+        width: u32,
+        height: u32,
+    },
     Stored {
         slot: usize,
         width: u32,
@@ -37,43 +41,63 @@ pub enum Outcome {
         height: u32,
     },
 }
-
-struct Snapshot {
-    label: String,
-    png: Vec<u8>,
-    width: u32,
-    height: u32,
+#[derive(Clone, Debug, PartialEq)]
+struct Display {
+    id: u32,
     x: i32,
     y: i32,
-    display_width: u32,
-    display_height: u32,
-    ready: bool,
+    width: u32,
+    height: u32,
+    scale: f64,
 }
-
+impl Display {
+    fn label(&self) -> String {
+        format!("region-{}", self.id)
+    }
+    fn read(monitor: &xcap::Monitor) -> Result<Self, String> {
+        let error = |e| format!("Could not read display geometry: {e}");
+        Ok(Self {
+            id: monitor.id().map_err(error)?,
+            x: monitor.x().map_err(error)?,
+            y: monitor.y().map_err(error)?,
+            width: monitor.width().map_err(error)?,
+            height: monitor.height().map_err(error)?,
+            scale: f64::from(monitor.scale_factor().map_err(error)?),
+        })
+    }
+}
 #[derive(Debug)]
 enum Completion {
     Ready,
     Selected { index: usize, selection: Selection },
+    Slot(usize),
     Cancelled,
     Failed(String),
 }
-
+#[derive(Clone, Copy, PartialEq)]
+enum Phase {
+    Selecting,
+    Acquiring,
+    Choosing,
+}
 struct Session {
-    snapshots: Vec<Snapshot>,
+    id: u64,
+    displays: Vec<Display>,
     sender: tauri::async_runtime::Sender<Completion>,
     submitted: bool,
+    ready_sent: bool,
+    phase: Phase,
+    timing: Timing,
 }
-
 #[derive(Default)]
 pub struct CaptureState {
     busy: AtomicBool,
     session: Mutex<Option<Session>>,
+    ready: Mutex<HashSet<String>>,
 }
-
 fn state_error() -> String {
     "Capture state is unavailable. Restart Slotshot.".into()
 }
-
 #[cfg(target_os = "macos")]
 fn permission() -> Result<(), String> {
     let access = core_graphics::access::ScreenCaptureAccess;
@@ -93,58 +117,83 @@ fn permission() -> Result<(), String> {
     Ok(())
 }
 
-fn snapshots() -> Result<Vec<Snapshot>, String> {
-    permission()?;
+fn displays() -> Result<Vec<Display>, String> {
     let monitors = xcap::Monitor::all().map_err(|e| format!("Could not list displays: {e}"))?;
     if monitors.is_empty() || monitors.len() > 16 {
         return Err("Capture requires between 1 and 16 active displays.".into());
     }
-    let id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
-    let mut total_pixels = 0;
-    let mut result = Vec::new();
-    for (index, monitor) in monitors.into_iter().enumerate() {
-        let metadata_error = |e| format!("Could not read display geometry: {e}");
-        let display_width = monitor.width().map_err(metadata_error)?;
-        let display_height = monitor.height().map_err(metadata_error)?;
-        let x = monitor.x().map_err(metadata_error)?;
-        let y = monitor.y().map_err(metadata_error)?;
-        // macOS desktop geometry is in points; Windows geometry is in pixels.
-        #[cfg(target_os = "macos")]
-        let scale = f64::from(monitor.scale_factor().map_err(metadata_error)?);
-        #[cfg(not(target_os = "macos"))]
-        let scale = 1.0;
-        let estimated = f64::from(display_width) * f64::from(display_height) * scale * scale;
-        if !estimated.is_finite()
-            || estimated <= 0.0
-            || estimated + total_pixels as f64 > MAX_PIXELS as f64
-        {
-            return Err("The connected displays exceed the capture memory limit (64 megapixels). Disconnect a display or lower its resolution.".into());
-        }
-        let image = monitor.capture_image().map_err(|e| {
-            format!("Screen capture backend failed after the permission check passed: {e}. Retry capture; if it persists, report this backend error separately from a permission denial.")
-        })?;
-        let (width, height) = image.dimensions();
-        total_pixels += u64::from(width) * u64::from(height);
-        if width == 0 || height == 0 || total_pixels > MAX_PIXELS {
-            return Err(
-                "The captured displays are empty or exceed the 64 megapixel memory limit.".into(),
-            );
-        }
-        result.push(Snapshot {
-            label: format!("region-{id}-{index}"),
-            png: export::png(&image)?,
-            width,
-            height,
-            x,
-            y,
-            display_width,
-            display_height,
-            ready: false,
-        });
+    let displays = monitors
+        .iter()
+        .map(Display::read)
+        .collect::<Result<Vec<_>, _>>()?;
+    if displays
+        .iter()
+        .any(|d| d.width == 0 || d.height == 0 || !d.scale.is_finite() || d.scale <= 0.0)
+    {
+        return Err("Invalid display geometry. Retry capture.".into());
     }
-    Ok(result)
+    Ok(displays)
 }
-
+// Geometry-only prewarming. No permission request, screenshot, timer, or recording while idle.
+pub fn prewarm(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let operation = match app.state::<SlotState>().begin() {
+            Ok(op) => op,
+            Err(_) => return,
+        };
+        if let Ok(Ok(displays)) = tauri::async_runtime::spawn_blocking(displays).await {
+            for display in displays {
+                let _ = create_overlay(
+                    &app,
+                    &display.label(),
+                    display.x,
+                    display.y,
+                    display.width,
+                    display.height,
+                )
+                .await;
+            }
+        }
+        drop(operation);
+    });
+}
+fn acquire(
+    display: &Display,
+    selection: Selection,
+    timing: Timing,
+) -> Result<image::RgbaImage, String> {
+    permission()?;
+    let monitor = xcap::Monitor::all()
+        .map_err(|e| format!("Could not list displays: {e}"))?
+        .into_iter()
+        .find(|m| m.id().ok() == Some(display.id))
+        .ok_or("Display disconnected. Retry capture.")?;
+    if Display::read(&monitor)? != *display {
+        return Err("Display geometry changed during selection. Retry capture.".into());
+    }
+    // XCap takes desktop points on macOS and physical monitor pixels on Windows.
+    let region = selection.pixels(display.width, display.height)?;
+    let scale = if cfg!(target_os = "macos") {
+        display.scale
+    } else {
+        1.0
+    };
+    let pixels = f64::from(region.width) * f64::from(region.height) * scale * scale;
+    if pixels > MAX_PIXELS as f64 {
+        return Err("Selected region exceeds the 64 megapixel memory limit.".into());
+    }
+    let image = monitor.capture_region(region.x, region.y, region.width, region.height)
+        .map_err(|e| format!("Screen capture backend failed after the permission check passed: {e}. Retry capture."))?;
+    timing.mark("screen_acquisition_completed");
+    if image.width() == 0
+        || image.height() == 0
+        || u64::from(image.width()) * u64::from(image.height()) > MAX_PIXELS
+    {
+        return Err("Captured region is empty or exceeds the 64 megapixel memory limit.".into());
+    }
+    Ok(image)
+}
 async fn create_overlay(
     app: &AppHandle,
     label: &str,
@@ -153,20 +202,27 @@ async fn create_overlay(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html?region".into()))
-        .title("Slotshot — drag a region, Escape to cancel")
-        .decorations(false)
-        .shadow(false)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .visible_on_all_workspaces(true)
-        .visible(false)
-        .focused(false)
-        .build()
-        .map_err(|e| format!("Could not open selection window: {e}"))?;
+    let window = if let Some(window) = app.get_webview_window(label) {
+        window
+    } else {
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html?region".into()))
+            .title("Slotshot — drag a region, Escape to cancel")
+            .transparent(true)
+            .background_color(tauri::window::Color(0, 0, 0, 0))
+            .content_protected(true)
+            .decorations(false)
+            .shadow(false)
+            .resizable(false)
+            .maximizable(false)
+            .minimizable(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .visible_on_all_workspaces(true)
+            .visible(false)
+            .focused(false)
+            .build()
+            .map_err(|e| format!("Could not open selection window: {e}"))?
+    };
     #[cfg(target_os = "macos")]
     {
         window
@@ -220,146 +276,230 @@ async fn create_overlay(
     Ok(())
 }
 
-fn cleanup(app: &AppHandle) {
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PickerVisibility {
+    Hidden,
+    Minimized,
+    Visible,
+}
+
+async fn hide_overlays(app: &AppHandle) -> Result<(), String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let result = handle
+            .webview_windows()
+            .into_iter()
+            .filter(|(label, _)| label.starts_with("region-"))
+            .try_for_each(|(_, window)| {
+                window.hide().map_err(|e| e.to_string())?;
+                if window.is_visible().map_err(|e| e.to_string())? {
+                    return Err("Selection overlay could not be hidden; capture aborted.".into());
+                }
+                Ok(())
+            });
+        let _ = sender.try_send(result);
+    })
+    .map_err(|e| e.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or("Overlay dismissal was interrupted.")?
+}
+
+async fn cleanup(app: &AppHandle, visibility: PickerVisibility) {
     let state = app.state::<CaptureState>();
-    // Clear state first so Destroyed callbacks cannot cancel the next capture.
+    // Pending pixels exist only in the capture future, never a temporary file.
     if let Ok(mut session) = state.session.lock() {
         *session = None;
     }
-    for (label, window) in app.webview_windows() {
-        if label.starts_with("region-") {
-            let _ = window.destroy();
+    let _ = hide_overlays(app).await;
+    match visibility {
+        PickerVisibility::Visible => crate::desktop::show(app),
+        PickerVisibility::Minimized => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.minimize();
+            }
+        }
+        PickerVisibility::Hidden => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+            }
         }
     }
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
     state.busy.store(false, Ordering::Release);
+}
+
+fn signal_ready(state: &CaptureState) -> Result<(), String> {
+    let ready = state.ready.lock().map_err(|_| state_error())?;
+    let mut guard = state.session.lock().map_err(|_| state_error())?;
+    if let Some(session) = guard.as_mut()
+        && !session.ready_sent
+        && session.displays.iter().all(|d| ready.contains(&d.label()))
+    {
+        session
+            .sender
+            .try_send(Completion::Ready)
+            .map_err(|_| "Selection initialization was interrupted.")?;
+        session.ready_sent = true;
+    }
+    Ok(())
 }
 
 async fn capture(
     app: &AppHandle,
     destination: Destination,
-    slot: Option<usize>,
     revision: u64,
+    timing: Timing,
 ) -> Result<Outcome, String> {
     let main = app
         .get_webview_window("main")
         .ok_or("Main window is unavailable.")?;
     main.hide()
         .map_err(|e| format!("Could not hide Slotshot: {e}"))?;
-    let snapshots = tauri::async_runtime::spawn_blocking(|| {
-        // One settling delay after hiding the launcher; no background polling.
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        snapshots()
+    timing.mark("picker_hidden");
+    let displays = tauri::async_runtime::spawn_blocking(displays)
+        .await
+        .map_err(|e| e.to_string())??;
+    timing.mark("display_enumeration_completed");
+    let labels: HashSet<_> = displays.iter().map(Display::label).collect();
+    // Display hot-plug keeps the pool bounded to currently connected displays.
+    for (label, window) in app.webview_windows() {
+        if label.starts_with("region-") && !labels.contains(&label) {
+            app.state::<CaptureState>()
+                .ready
+                .lock()
+                .map_err(|_| state_error())?
+                .remove(&label);
+            let _ = window.destroy();
+        }
+    }
+    let id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+    let (sender, mut receiver) = tauri::async_runtime::channel(4);
+    let state = app.state::<CaptureState>();
+    *state.session.lock().map_err(|_| state_error())? = Some(Session {
+        id,
+        displays: displays.clone(),
+        sender,
+        submitted: false,
+        ready_sent: false,
+        phase: Phase::Selecting,
+        timing,
+    });
+    for display in &displays {
+        create_overlay(
+            app,
+            &display.label(),
+            display.x,
+            display.y,
+            display.width,
+            display.height,
+        )
+        .await?;
+    }
+    timing.mark("overlay_creation_completed");
+    signal_ready(&state)?;
+    match await_ready(&mut receiver, std::time::Duration::from_secs(15)).await? {
+        Completion::Ready => {}
+        Completion::Cancelled => return Ok(Outcome::Cancelled),
+        Completion::Failed(message) => return Err(message),
+        _ => return Err("Unexpected selection initialization.".into()),
+    }
+    for display in &displays {
+        let window = app
+            .get_webview_window(&display.label())
+            .ok_or("Selection window closed unexpectedly.")?;
+        window.show().map_err(|e| e.to_string())?;
+    }
+    // Focus one for Escape. Clicking any other display transfers keyboard focus.
+    let window = app
+        .get_webview_window(&displays[0].label())
+        .ok_or("Selection window closed unexpectedly.")?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    timing.mark("overlay_shown_focused");
+    for display in &displays {
+        app.emit_to(display.label(), "region-activate", id)
+            .map_err(|e| e.to_string())?;
+    }
+    let (index, selection) = match receiver
+        .recv()
+        .await
+        .ok_or("Selection windows closed unexpectedly.")?
+    {
+        Completion::Selected { index, selection } => (index, selection),
+        Completion::Cancelled => return Ok(Outcome::Cancelled),
+        Completion::Failed(message) => return Err(message),
+        _ => return Err("Unexpected selection result.".into()),
+    };
+    timing.mark("selection_completed");
+    // Complete native hide calls on the UI thread before asking the OS for pixels.
+    // Protected overlays are an additional safeguard, not a replacement for dismissal.
+    hide_overlays(app).await?;
+    timing.mark("overlays_hidden");
+    let display = displays[index].clone();
+    let (image, png) = tauri::async_runtime::spawn_blocking(move || {
+        let image = acquire(&display, selection, timing)?;
+        let png = export::png(&image)?;
+        timing.mark("png_encoding_completed");
+        timing.mark("final_region_capture_encoding_completed");
+        Ok::<_, String>((image, png))
     })
     .await
     .map_err(|e| format!("Capture worker failed: {e}"))??;
-    let (sender, mut receiver) = tauri::async_runtime::channel(1);
-    let state = app.state::<CaptureState>();
-    // Build hidden windows only after ALL snapshots exist: no overlay can be captured.
-    // Do not hold the session mutex across window creation (webview requests need it).
-    let overlays: Vec<_> = snapshots
-        .iter()
-        .map(|s| (s.label.clone(), s.x, s.y, s.display_width, s.display_height))
-        .collect();
-    *state.session.lock().map_err(|_| state_error())? = Some(Session {
-        snapshots,
-        sender,
-        submitted: false,
-    });
-    for (label, x, y, width, height) in overlays {
-        create_overlay(app, &label, x, y, width, height).await?;
-    }
-    let completion = await_ready(&mut receiver, std::time::Duration::from_secs(15)).await?;
-    let completion = if matches!(completion, Completion::Ready) {
-        let labels: Vec<_> = state
-            .session
-            .lock()
-            .map_err(|_| state_error())?
-            .as_ref()
-            .ok_or("Capture is no longer active.")?
-            .snapshots
-            .iter()
-            .map(|s| s.label.clone())
-            .collect();
-        for label in labels {
-            app.get_webview_window(&label)
-                .ok_or("Selection window closed unexpectedly.")?
-                .show()
-                .map_err(|e| format!("Could not display selection: {e}"))?;
+    let (width, height) = image.dimensions();
+    let slot = match destination {
+        Destination::Save => None,
+        Destination::Store => {
+            {
+                let mut guard = state.session.lock().map_err(|_| state_error())?;
+                let session = guard.as_mut().ok_or("Capture is no longer active.")?;
+                session.phase = Phase::Choosing;
+                session.submitted = false;
+            }
+            crate::desktop::choosing(app, id, width, height);
+            crate::desktop::show(app);
+            match receiver
+                .recv()
+                .await
+                .ok_or("Destination selection was interrupted.")?
+            {
+                Completion::Slot(slot) => Some(slot),
+                Completion::Cancelled => return Ok(Outcome::Cancelled),
+                _ => return Err("Unexpected capture destination.".into()),
+            }
         }
-        // Focus one overlay for Escape; clicking another display transfers focus.
-        if let Some(window) = app
-            .webview_windows()
-            .into_iter()
-            .find(|(l, _)| l.starts_with("region-"))
-            .map(|(_, w)| w)
-        {
-            window
-                .set_focus()
-                .map_err(|e| format!("Could not focus selection: {e}"))?;
-        }
-        receiver
-            .recv()
-            .await
-            .ok_or("Selection windows closed unexpectedly.")?
-    } else {
-        completion
     };
-    let session = state
-        .session
-        .lock()
-        .map_err(|_| state_error())?
-        .take()
-        .ok_or("Capture is no longer active.")?;
-    match completion {
-        Completion::Ready => Err("Selection initialized more than once. Retry capture.".into()),
-        Completion::Cancelled => Ok(Outcome::Cancelled),
-        Completion::Failed(message) => Err(message),
-        Completion::Selected { index, selection } => {
-            let snapshot = session
-                .snapshots
-                .into_iter()
-                .nth(index)
-                .ok_or("Display is no longer available.")?;
-            // Drop all other display images before decoding the selected display.
-            let app = app.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let region = selection.pixels(snapshot.width, snapshot.height)?;
-                let image =
-                    image::load_from_memory_with_format(&snapshot.png, image::ImageFormat::Png)
-                        .map_err(|e| format!("Could not decode captured image: {e}"))?
-                        .crop_imm(region.x, region.y, region.width, region.height)
-                        .into_rgba8();
-                let (width, height) = image.dimensions();
-                match destination {
-                    Destination::Store => {
-                        let slot = slots::with_store(&app, |s| s.assign(slot, revision, &image))?;
-                        Ok(Outcome::Stored {
-                            slot,
-                            width,
-                            height,
-                        })
-                    }
-                    Destination::Save => {
-                        let path = export::save(
-                            &slots::with_store(&app, |s| s.export_directory())?,
-                            &image,
-                        )?;
-                        Ok(Outcome::Saved {
-                            path: path.to_string_lossy().into_owned(),
-                            width,
-                            height,
-                        })
-                    }
+    let worker = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = match slot {
+            Some(slot) => {
+                let slot = slots::with_store(&worker, |s| {
+                    s.assign_encoded(Some(slot), revision, &image, &png)
+                })?;
+                Outcome::Stored {
+                    slot,
+                    width,
+                    height,
                 }
-            })
-            .await
-            .map_err(|e| format!("Image export worker failed: {e}"))?
-        }
-    }
+            }
+            None => {
+                let path = export::save_bytes(
+                    &slots::with_store(&worker, |s| s.export_directory())?,
+                    &png,
+                )?;
+                Outcome::Saved {
+                    path: path.to_string_lossy().into_owned(),
+                    width,
+                    height,
+                }
+            }
+        };
+        timing.mark("storage_completed");
+        Ok(outcome)
+    })
+    .await
+    .map_err(|e| format!("Storage worker failed: {e}"))?
 }
 
 #[tauri::command]
@@ -367,30 +507,43 @@ pub async fn capture_region(
     app: AppHandle,
     window: WebviewWindow,
     destination: Destination,
-    slot: Option<usize>,
-    revision: u64,
-    replace: bool,
 ) -> Result<Outcome, String> {
-    if window.label() != "main" {
-        return Err("Capture must start from the main window.".into());
-    }
-    let _operation = app.state::<SlotState>().begin()?;
-    slots::with_store(&app, |s| {
-        match destination {
-            Destination::Store => {
-                let index = s.validate_target(slot, revision)?;
-                if s.view().slots[index].is_some() && !replace {
-                    return Err(
-                        "Confirm replacement before capturing into an occupied slot.".into(),
-                    );
-                }
-            }
-            Destination::Save => {
-                s.export_directory()?;
-            }
-        }
-        Ok(())
-    })?;
+    slots::main_only(&window)?;
+    let operation = app.state::<SlotState>().begin()?;
+    let result = run_capture(&app, destination, operation, Timing::new("button_received")).await;
+    crate::desktop::capture_finished(&app, &result);
+    result
+}
+pub fn active(app: &AppHandle) -> bool {
+    app.state::<CaptureState>().busy.load(Ordering::Acquire)
+}
+
+pub async fn run_capture(
+    app: &AppHandle,
+    destination: Destination,
+    _operation: slots::Operation,
+    timing: Timing,
+) -> Result<Outcome, String> {
+    timing.mark("native_command_started");
+    let main = app
+        .get_webview_window("main")
+        .ok_or("Main window is unavailable.")?;
+    let previous = if !main.is_visible().map_err(|e| e.to_string())? {
+        PickerVisibility::Hidden
+    } else if main.is_minimized().map_err(|e| e.to_string())? {
+        PickerVisibility::Minimized
+    } else {
+        PickerVisibility::Visible
+    };
+    let worker = app.clone();
+    let revision = tauri::async_runtime::spawn_blocking(move || {
+        slots::with_store(&worker, |s| {
+            s.export_directory()?;
+            Ok(s.view().revision)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     if app
         .state::<CaptureState>()
         .busy
@@ -398,50 +551,166 @@ pub async fn capture_region(
     {
         return Err("A capture is already in progress.".into());
     }
-    let result = capture(&app, destination, slot, revision).await;
-    cleanup(&app);
+    let result = capture(app, destination, revision, timing).await;
+    cleanup(app, restore_visibility(previous, &result)).await;
     result
 }
-
-#[tauri::command]
-pub fn region_snapshot(
-    app: AppHandle,
-    window: WebviewWindow,
-) -> Result<tauri::ipc::Response, String> {
-    let state = app.state::<CaptureState>();
-    let session = state.session.lock().map_err(|_| state_error())?;
-    let snapshot = session
-        .as_ref()
-        .and_then(|s| s.snapshots.iter().find(|s| s.label == window.label()))
-        .ok_or("This selection window is no longer active.")?;
-    Ok(tauri::ipc::Response::new(snapshot.png.clone()))
+fn restore_visibility(
+    previous: PickerVisibility,
+    result: &Result<Outcome, String>,
+) -> PickerVisibility {
+    if matches!(result, Ok(Outcome::Stored { .. })) {
+        PickerVisibility::Visible
+    } else {
+        previous
+    }
 }
-
+pub fn shutdown(app: &AppHandle) {
+    if let Ok(mut session) = app.state::<CaptureState>().session.lock() {
+        *session = None;
+    }
+    for (label, window) in app.webview_windows() {
+        if label.starts_with("region-") {
+            let _ = window.destroy();
+        }
+    }
+}
 #[tauri::command]
 pub fn region_ready(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    let state = app.state::<CaptureState>();
-    let mut session = state.session.lock().map_err(|_| state_error())?;
-    let session = session.as_mut().ok_or("Capture is no longer active.")?;
-    if session.submitted {
-        return Err("Capture has already finished.".into());
+    if !window.label().starts_with("region-") {
+        return Err("Unknown selection window.".into());
     }
-    let snapshot = session
-        .snapshots
-        .iter_mut()
-        .find(|s| s.label == window.label())
-        .ok_or("This selection window is no longer active.")?;
-    if !snapshot.ready {
-        snapshot.ready = true;
-        if session.snapshots.iter().all(|s| s.ready) {
-            session
-                .sender
-                .try_send(Completion::Ready)
-                .map_err(|_| "Selection initialization was interrupted.")?;
-        }
+    let state = app.state::<CaptureState>();
+    state
+        .ready
+        .lock()
+        .map_err(|_| state_error())?
+        .insert(window.label().into());
+    signal_ready(&state)
+}
+#[tauri::command]
+pub fn region_interactive(
+    app: AppHandle,
+    window: WebviewWindow,
+    capture: u64,
+) -> Result<(), String> {
+    let state = app.state::<CaptureState>();
+    let guard = state.session.lock().map_err(|_| state_error())?;
+    let session = guard.as_ref().ok_or("Capture is no longer active.")?;
+    validate_overlay(session, window.label(), capture)?;
+    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
+        session.timing.mark("overlay_interactive");
     }
     Ok(())
 }
-
+fn validate_overlay(session: &Session, label: &str, id: u64) -> Result<usize, String> {
+    if session.id != id || session.phase != Phase::Selecting || session.submitted {
+        return Err("Selection is no longer active.".into());
+    }
+    session
+        .displays
+        .iter()
+        .position(|d| d.label() == label)
+        .ok_or("Unknown selection window.".into())
+}
+fn complete(
+    app: &AppHandle,
+    label: &str,
+    id: u64,
+    selection: Option<Selection>,
+    failed: bool,
+) -> Result<(), String> {
+    let state = app.state::<CaptureState>();
+    let mut guard = state.session.lock().map_err(|_| state_error())?;
+    let session = guard.as_mut().ok_or("Capture is no longer active.")?;
+    let index = validate_overlay(session, label, id)?;
+    let completion = if let Some(selection) = selection {
+        let display = &session.displays[index];
+        selection.pixels(display.width, display.height)?;
+        Completion::Selected { index, selection }
+    } else if failed {
+        Completion::Failed("Selection window failed. Retry capture.".into())
+    } else {
+        Completion::Cancelled
+    };
+    session
+        .sender
+        .try_send(completion)
+        .map_err(|_| "Capture has already finished.")?;
+    session.submitted = true;
+    session.phase = Phase::Acquiring;
+    Ok(())
+}
+#[tauri::command]
+pub fn finish_region(
+    app: AppHandle,
+    window: WebviewWindow,
+    capture: u64,
+    selection: Selection,
+) -> Result<(), String> {
+    complete(&app, window.label(), capture, Some(selection), false)
+}
+#[tauri::command]
+pub fn cancel_region(
+    app: AppHandle,
+    window: WebviewWindow,
+    capture: u64,
+    failed: bool,
+) -> Result<(), String> {
+    complete(&app, window.label(), capture, None, failed)
+}
+#[tauri::command]
+pub fn choose_capture_slot(
+    app: AppHandle,
+    window: WebviewWindow,
+    capture: u64,
+    slot: Option<usize>,
+) -> Result<(), String> {
+    slots::main_only(&window)?;
+    let state = app.state::<CaptureState>();
+    let mut guard = state.session.lock().map_err(|_| state_error())?;
+    let session = guard
+        .as_mut()
+        .ok_or("No screenshot is waiting for a destination.")?;
+    validate_choice(session, capture, slot)?;
+    if let Some(slot) = slot {
+        slots::with_store(&app, |s| {
+            s.validate_target(Some(slot), s.view().revision).map(|_| ())
+        })?;
+    }
+    session
+        .sender
+        .try_send(slot.map_or(Completion::Cancelled, Completion::Slot))
+        .map_err(|_| "Destination has already been chosen.")?;
+    session.submitted = true;
+    Ok(())
+}
+fn validate_choice(session: &Session, id: u64, slot: Option<usize>) -> Result<(), String> {
+    if session.id != id || session.phase != Phase::Choosing || session.submitted {
+        return Err("Destination selection is no longer active.".into());
+    }
+    if slot.is_some_and(|s| !(1..=10).contains(&s)) {
+        return Err("Invalid slot number.".into());
+    }
+    Ok(())
+}
+pub fn window_closed(app: &AppHandle, label: &str) {
+    if !label.starts_with("region-") {
+        return;
+    }
+    let state = app.state::<CaptureState>();
+    if let Ok(mut ready) = state.ready.lock() {
+        ready.remove(label);
+    }
+    if let Ok(mut guard) = state.session.lock()
+        && let Some(session) = guard.as_mut()
+        && session.displays.iter().any(|d| d.label() == label)
+        && !session.submitted
+    {
+        let _ = session.sender.try_send(Completion::Cancelled);
+        session.submitted = true;
+    }
+}
 async fn await_ready(
     receiver: &mut tauri::async_runtime::Receiver<Completion>,
     deadline: std::time::Duration,
@@ -457,6 +726,89 @@ async fn await_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn session(phase: Phase) -> Session {
+        let (sender, _) = tauri::async_runtime::channel(4);
+        Session {
+            id: 42,
+            displays: vec![Display {
+                id: 7,
+                x: -1512,
+                y: -100,
+                width: 1512,
+                height: 982,
+                scale: 2.0,
+            }],
+            sender,
+            submitted: false,
+            ready_sent: false,
+            phase,
+            timing: Timing::new("test"),
+        }
+    }
+
+    #[test]
+    fn destination_rejects_wrong_session_phase_duplicates_and_invalid_slots() {
+        let mut pending = session(Phase::Selecting);
+        assert!(validate_choice(&pending, 42, Some(1)).is_err());
+        pending.phase = Phase::Acquiring;
+        assert!(validate_choice(&pending, 42, None).is_err());
+        pending.phase = Phase::Choosing;
+        for slot in 1..=10 {
+            assert!(validate_choice(&pending, 42, Some(slot)).is_ok());
+        }
+        assert!(validate_choice(&pending, 42, None).is_ok());
+        for slot in [0, 11, usize::MAX] {
+            assert!(validate_choice(&pending, 42, Some(slot)).is_err());
+        }
+        assert!(validate_choice(&pending, 41, Some(1)).is_err());
+        pending.submitted = true;
+        assert!(validate_choice(&pending, 42, Some(1)).is_err());
+        assert!(validate_choice(&pending, 42, None).is_err());
+    }
+
+    #[test]
+    fn reused_overlays_reject_previous_capture_messages_and_other_displays() {
+        let mut selecting = session(Phase::Selecting);
+        assert_eq!(validate_overlay(&selecting, "region-7", 42).unwrap(), 0);
+        assert!(validate_overlay(&selecting, "main", 42).is_err());
+        assert!(validate_overlay(&selecting, "region-8", 42).is_err());
+        assert!(validate_overlay(&selecting, "region-7", 41).is_err());
+        selecting.submitted = true;
+        assert!(validate_overlay(&selecting, "region-7", 42).is_err());
+    }
+
+    #[test]
+    fn background_visibility_restores_on_cancel_failure_and_save_but_store_reveals() {
+        for previous in [
+            PickerVisibility::Hidden,
+            PickerVisibility::Minimized,
+            PickerVisibility::Visible,
+        ] {
+            for result in [
+                Ok(Outcome::Cancelled),
+                Err("Snapshot failed".into()),
+                Ok(Outcome::Saved {
+                    path: "export.png".into(),
+                    width: 10,
+                    height: 10,
+                }),
+            ] {
+                assert_eq!(restore_visibility(previous, &result), previous);
+            }
+            assert_eq!(
+                restore_visibility(
+                    previous,
+                    &Ok(Outcome::Stored {
+                        slot: 1,
+                        width: 10,
+                        height: 10
+                    })
+                ),
+                PickerVisibility::Visible
+            );
+        }
+    }
 
     #[test]
     fn initialization_timeout_recovers_even_when_sender_remains_alive() {
@@ -483,61 +835,5 @@ mod tests {
                 ));
             }
         });
-    }
-}
-
-fn complete(
-    app: &AppHandle,
-    label: &str,
-    selection: Option<Selection>,
-    failed: bool,
-) -> Result<(), String> {
-    let state = app.state::<CaptureState>();
-    let mut session = state.session.lock().map_err(|_| state_error())?;
-    let session = session.as_mut().ok_or("Capture is no longer active.")?;
-    let index = session
-        .snapshots
-        .iter()
-        .position(|s| s.label == label)
-        .ok_or("Unknown selection window.")?;
-    if session.submitted {
-        return Err("Capture has already finished.".into());
-    }
-    let completion = if let Some(selection) = selection {
-        let snapshot = &session.snapshots[index];
-        selection.pixels(snapshot.width, snapshot.height)?;
-        Completion::Selected { index, selection }
-    } else if failed {
-        Completion::Failed(
-            "The selection window could not display its snapshot. Retry capture.".into(),
-        )
-    } else {
-        Completion::Cancelled
-    };
-    session
-        .sender
-        .try_send(completion)
-        .map_err(|_| "Capture has already finished.")?;
-    session.submitted = true;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn finish_region(
-    app: AppHandle,
-    window: WebviewWindow,
-    selection: Selection,
-) -> Result<(), String> {
-    complete(&app, window.label(), Some(selection), false)
-}
-
-#[tauri::command]
-pub fn cancel_region(app: AppHandle, window: WebviewWindow, failed: bool) -> Result<(), String> {
-    complete(&app, window.label(), None, failed)
-}
-
-pub fn window_closed(app: &AppHandle, label: &str) {
-    if label.starts_with("region-") {
-        let _ = complete(app, label, None, false);
     }
 }

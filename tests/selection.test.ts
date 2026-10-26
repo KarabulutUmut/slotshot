@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectSlot } from "../src/selection.ts";
+import { selectSlot, destinationSlot } from "../src/selection.ts";
 
 const plain = { shift: false, toggle: false };
 const toggle = { shift: false, toggle: true };
@@ -31,4 +31,18 @@ test("range without an anchor selects one slot; ranges include empty positions",
     selectSlot({ ids: [1], anchor: 1 }, 4, shift).ids,
     [1, 2, 3, 4],
   );
+});
+
+test("destination keys respect configured count and 0 selects slot 10", () => {
+  for (let count = 1; count <= 10; count++) {
+    for (let id = 1; id <= 10; id++) {
+      assert.equal(
+        destinationSlot(id === 10 ? "0" : String(id), count),
+        id <= count ? id : null,
+      );
+    }
+  }
+  for (const key of ["Enter", "Escape", "10", "a", "", "ArrowRight"]) {
+    assert.equal(destinationSlot(key, 10), null);
+  }
 });

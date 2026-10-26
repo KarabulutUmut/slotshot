@@ -1,11 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "region",
-  "description": "Selection windows can read their own snapshot and finish or cancel the active capture",
+  "description": "Selection windows can initialize and finish or cancel their active live selection",
   "windows": ["region-*"],
   "permissions": [
-    "allow-region-snapshot",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-region-ready",
+    "allow-region-interactive",
     "allow-finish-region",
     "allow-cancel-region"
   ]

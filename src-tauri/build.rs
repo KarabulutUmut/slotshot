@@ -1,6 +1,10 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "shortcut_view",
+            "shortcut_recording",
+            "configure_shortcuts",
+            "desktop_view",
             "slot_view",
             "slot_thumbnail",
             "clear_slots",
@@ -9,8 +13,9 @@ fn main() {
             "configure_exports",
             "drag_slots",
             "capture_region",
-            "region_snapshot",
+            "choose_capture_slot",
             "region_ready",
+            "region_interactive",
             "finish_region",
             "cancel_region",
         ]),

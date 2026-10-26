@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "allow-capture-region",
+    "allow-choose-capture-slot",
     "allow-slot-view",
     "allow-slot-thumbnail",
     "allow-clear-slots",
@@ -12,6 +13,12 @@
     "allow-save-slots",
     "allow-configure-exports",
     "allow-drag-slots",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "allow-shortcut-view",
+    "allow-configure-shortcuts",
+    "allow-desktop-view",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-shortcut-recording"
   ]
 }
