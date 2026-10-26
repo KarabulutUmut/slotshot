@@ -257,6 +257,7 @@ fn pressed_once(held: &mut HashSet<u32>, id: u32, state: ShortcutState) -> bool 
 }
 
 pub fn handle(app: &AppHandle, key: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent) {
+    let timing = crate::timing::Timing::new("hotkey_received");
     let state = app.state::<ShortcutStateData>();
     // Registration can dispatch to the native thread. Never block that thread
     // waiting on a preference transaction that is itself waiting on registration.
@@ -280,7 +281,7 @@ pub fn handle(app: &AppHandle, key: &Shortcut, event: tauri_plugin_global_shortc
         .position(|value| value.as_ref().and_then(|s| parse(s).ok()).as_ref() == Some(key));
     drop(runtime);
     if let Some(index) = action {
-        crate::desktop::dispatch(app, ACTIONS[index]);
+        crate::desktop::dispatch_timed(app, ACTIONS[index], timing);
     }
 }
 pub fn view(app: &AppHandle) -> View {

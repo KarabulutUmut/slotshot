@@ -398,3 +398,8 @@ h3 {
 .settings-done {
   margin-top: 16px;
 }
+
+.destination-title {
+  font-size: 12px;
+  color: #b8dbff;
+}

@@ -9,9 +9,14 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import { captureRegion, type Destination, type Outcome } from "./capture";
+import {
+  captureRegion,
+  chooseCaptureSlot,
+  type Destination,
+  type Outcome,
+} from "./capture";
 import RegionOverlay from "./RegionOverlay";
-import { selectSlot, type SelectionState } from "./selection";
+import { selectSlot, destinationSlot, type SelectionState } from "./selection";
 import { fitSlots, nextSlotIndex } from "./layout";
 import "./App.css";
 
@@ -140,6 +145,12 @@ function Picker() {
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [localBusy, setBusy] = useState(false);
   const [nativeBusy, setNativeBusy] = useState(false);
+  const [pending, setPending] = useState<Extract<
+    Outcome,
+    { status: "choosing" }
+  > | null>(null);
+  const choosing = useRef(false);
+  const [committing, setCommitting] = useState(false);
   const busy = localBusy || nativeBusy;
   const desktopSequence = useRef(0);
   const loadSequence = useRef(0);
@@ -263,6 +274,9 @@ function Picker() {
         );
       }
       const outcome = next.outcome;
+      setPending(outcome?.status === "choosing" ? outcome : null);
+      choosing.current = false;
+      setCommitting(false);
       if (outcome?.status === "stored") {
         setSelection({ ids: [outcome.slot], anchor: outcome.slot });
         setMessage(
@@ -345,34 +359,52 @@ function Picker() {
     return () => observer.disconnect();
   }, [view?.slots.length]);
 
+  const chooseDestination = useCallback(
+    async (slot: number | null) => {
+      if (!pending || choosing.current) return;
+      choosing.current = true;
+      setCommitting(true);
+      try {
+        await chooseCaptureSlot(pending.capture, slot);
+      } catch (error) {
+        choosing.current = false;
+        setCommitting(false);
+        setMessage(String(error));
+        setFailure(true);
+      }
+    },
+    [pending],
+  );
+
+  useEffect(() => {
+    if (!pending) return;
+    grid.current?.querySelector<HTMLButtonElement>(".slot")?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey)
+        return;
+      const slot = destinationSlot(event.key, view?.slots.length ?? 0);
+      if (event.key === "Escape" || slot !== null) {
+        event.preventDefault();
+        void chooseDestination(event.key === "Escape" ? null : slot);
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [pending, view?.slots.length, chooseDestination]);
+
   const capture = (destination: Destination) => {
     if (!view) return;
-    const slot =
-      destination === "store" && selection.ids.length === 1
-        ? selection.ids[0]
-        : null;
-    const replace = slot !== null && !!view.slots[slot - 1];
-    const action = () =>
-      void run(async () => {
-        const result = await captureRegion(
-          destination,
-          slot,
-          view.revision,
-          replace,
-        );
-        if (result.status === "cancelled") return "Capture cancelled.";
-        if (result.status === "stored") {
-          setSelection({ ids: [result.slot], anchor: result.slot });
-          return `Stored ${result.width} × ${result.height} PNG in slot ${result.slot}.`;
-        }
+    void run(async () => {
+      const result = await captureRegion(destination);
+      if (result.status === "cancelled") return "Capture cancelled.";
+      if (result.status === "stored") {
+        setSelection({ ids: [result.slot], anchor: result.slot });
+        return `Stored ${result.width} × ${result.height} PNG in slot ${result.slot}.`;
+      }
+      if (result.status === "saved")
         return `Saved ${result.width} × ${result.height} PNG to ${result.path}`;
-      });
-    if (replace)
-      setConfirmation({
-        text: `Replace slot ${slot}? Its current PNG and thumbnail will be permanently deleted after the new capture is saved. Cancelled capture keeps the current image.`,
-        action,
-      });
-    else action();
+      return "Choose a destination slot.";
+    });
   };
 
   const changeCount = (count: number) => {
@@ -438,16 +470,35 @@ function Picker() {
       <header className="picker-header" data-tauri-drag-region>
         <h1 className="sr-only">Slotshot</h1>
         <div className="capture-actions">
-          <button
-            disabled={!ready || setup}
-            title="Capture into the selected slot, or the first empty slot"
-            onClick={() => capture("store")}
-          >
-            <Icon name="capture" /> Store in Slot
-          </button>
-          <button disabled={!ready || setup} onClick={() => capture("save")}>
-            <Icon name="save" /> Save to Device
-          </button>
+          {pending ? (
+            <>
+              <strong className="destination-title" role="status">
+                Choose a slot
+              </strong>
+              <button
+                disabled={committing}
+                onClick={() => void chooseDestination(null)}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                disabled={!ready || setup}
+                title="Capture a region, then click any destination slot"
+                onClick={() => capture("store")}
+              >
+                <Icon name="capture" /> Store in Slot
+              </button>
+              <button
+                disabled={!ready || setup}
+                onClick={() => capture("save")}
+              >
+                <Icon name="save" /> Save to Device
+              </button>
+            </>
+          )}
         </div>
         <button
           className="icon-button"
@@ -536,7 +587,11 @@ function Picker() {
           }}
           ref={grid}
           role="group"
-          aria-label="Screenshot slots"
+          aria-label={
+            pending
+              ? "Choose screenshot destination; occupied slots replace immediately"
+              : "Screenshot slots"
+          }
           onKeyDown={(event) => {
             if (
               ![
@@ -564,12 +619,13 @@ function Picker() {
               buttons.length,
             );
             buttons[next]?.focus();
-            setSelection(
-              selectSlot(selection, next + 1, {
-                shift: event.shiftKey,
-                toggle: false,
-              }),
-            );
+            if (!pending)
+              setSelection(
+                selectSlot(selection, next + 1, {
+                  shift: event.shiftKey,
+                  toggle: false,
+                }),
+              );
           }}
         >
           {view?.slots.map((entry, index) => {
@@ -580,21 +636,26 @@ function Picker() {
                 key={id}
                 className={`slot ${entry ? "occupied" : "empty"} ${selected ? "selected" : ""}`}
                 title={
-                  entry
-                    ? `Slot ${id} · ${entry.width} × ${entry.height} pixels`
-                    : `Slot ${id} · Select, then Store in Slot`
+                  pending
+                    ? `Store in slot ${id}${entry ? " · Replace immediately" : ""}`
+                    : entry
+                      ? `Slot ${id} · ${entry.width} × ${entry.height} pixels`
+                      : `Slot ${id} · Empty`
                 }
                 aria-pressed={selected}
                 aria-label={`Slot ${id}, ${entry ? `${entry.width} by ${entry.height} pixels` : "empty"}`}
-                disabled={busy}
+                disabled={(busy && !pending) || committing}
                 onContextMenu={(e) => e.preventDefault()}
                 onDragStart={(e) => e.preventDefault()}
-                onPointerDown={(e) => pointerDown(e, id)}
+                onPointerDown={(e) => {
+                  if (!pending) pointerDown(e, id);
+                }}
                 onPointerMove={pointerMove}
                 onPointerCancel={() => {
                   press.current = null;
                 }}
                 onPointerUp={(e) => {
+                  if (pending) return;
                   const start = press.current;
                   if (
                     start &&
@@ -610,6 +671,10 @@ function Picker() {
                     );
                 }}
                 onClick={(e) => {
+                  if (pending) {
+                    void chooseDestination(id);
+                    return;
+                  }
                   if (e.detail === 0)
                     setSelection(
                       selectSlot(selection, id, {
@@ -683,9 +748,11 @@ function Picker() {
           <Icon name="clear" /> Clear
         </button>
         <span className="selection-count">
-          {occupied.length
-            ? `${occupied.length} selected`
-            : `${view?.slots.length ?? "…"} ${view?.slots.length === 1 ? "slot" : "slots"}`}
+          {pending
+            ? `Click or press 1–${Math.min(view?.slots.length ?? 1, 9)}${view?.slots.length === 10 ? "; 0 = 10" : ""} · Escape cancels`
+            : occupied.length
+              ? `${occupied.length} selected`
+              : `${view?.slots.length ?? "…"} ${view?.slots.length === 1 ? "slot" : "slots"}`}
         </span>
         {view?.warning && (
           <span className="sr-only" role="alert">
@@ -693,9 +760,13 @@ function Picker() {
           </span>
         )}
         <span className="sr-only" role="status" aria-live="polite">
-          {busy ? "Working…" : message}
+          {pending
+            ? "Choose any slot. Occupied slots replace immediately. Escape cancels."
+            : busy
+              ? "Working…"
+              : message}
         </span>
-        {(message || view?.warning || busy) && (
+        {!pending && (message || view?.warning || busy) && (
           <button
             className={`activity ${failure || view?.warning ? "has-error" : ""}`}
             title={view?.warning ?? message}

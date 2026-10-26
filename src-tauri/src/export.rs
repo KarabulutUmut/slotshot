@@ -46,6 +46,7 @@ fn write_unique(directory: &Path, stem: &str, bytes: &[u8]) -> io::Result<PathBu
     ))
 }
 
+#[cfg(test)]
 pub fn save(directory: &Path, image: &RgbaImage) -> Result<PathBuf, String> {
     let bytes = png(image)?;
     save_bytes(directory, &bytes)

@@ -51,6 +51,26 @@ pub fn desktop_view(app: AppHandle, window: WebviewWindow) -> Result<View, Strin
         .map_err(|e| e.to_string())?
         .clone())
 }
+pub fn choosing(app: &AppHandle, capture: u64, width: u32, height: u32) {
+    publish(
+        app,
+        true,
+        Some(Outcome::Choosing {
+            capture,
+            width,
+            height,
+        }),
+        None,
+        false,
+        false,
+    );
+}
+pub fn capture_finished(app: &AppHandle, result: &Result<Outcome, String>) {
+    match result {
+        Ok(outcome) => publish(app, false, Some(outcome.clone()), None, false, false),
+        Err(error) => publish(app, false, None, Some(error.clone()), true, false),
+    }
+}
 pub fn show(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -83,6 +103,13 @@ fn window_action(action: &str, visible: bool, minimized: bool) -> WindowAction {
     }
 }
 pub fn dispatch(app: &AppHandle, action: &str) {
+    dispatch_timed(
+        app,
+        action,
+        crate::timing::Timing::new("native_action_received"),
+    );
+}
+pub fn dispatch_timed(app: &AppHandle, action: &str, timing: crate::timing::Timing) {
     let window = app.get_webview_window("main");
     let effect = window_action(
         action,
@@ -123,17 +150,14 @@ pub fn dispatch(app: &AppHandle, action: &str) {
                         if view.export_directory.is_none() {
                             return Ok(None);
                         }
-                        if matches!(destination, Destination::Store) {
-                            s.validate_target(None, view.revision)?;
-                        }
-                        Ok(Some(view.revision))
+                        Ok(Some(()))
                     })
                 })
                 .await
                 .map_err(|e| e.to_string())
                 .and_then(|v| v);
-                let revision = match preparation {
-                    Ok(Some(revision)) => revision,
+                match preparation {
+                    Ok(Some(())) => {}
                     Ok(None) => {
                         drop(operation);
                         show(&app);
@@ -154,13 +178,8 @@ pub fn dispatch(app: &AppHandle, action: &str) {
                         return;
                     }
                 };
-                let result =
-                    capture::run_capture(&app, destination, None, revision, false, operation).await;
-                match result {
-                    Ok(outcome) => publish(&app, false, Some(outcome), None, false, false),
-                    // Capture restores prior visibility. Keep errors in Activity even while hidden.
-                    Err(error) => publish(&app, false, None, Some(error), true, false),
-                }
+                let result = capture::run_capture(&app, destination, operation, timing).await;
+                capture_finished(&app, &result);
             });
         }
         WindowAction::Hide => {

@@ -7,6 +7,7 @@ mod region;
 mod shortcuts;
 mod slots;
 mod storage;
+mod timing;
 mod window;
 
 pub fn run() {
@@ -72,8 +73,9 @@ pub fn run() {
             slots::configure_exports,
             slots::drag_slots,
             capture::capture_region,
-            capture::region_snapshot,
+            capture::choose_capture_slot,
             capture::region_ready,
+            capture::region_interactive,
             capture::finish_region,
             capture::cancel_region,
         ])
@@ -84,6 +86,7 @@ pub fn run() {
             desktop::setup(app.handle())?;
             window::restore(app.handle());
             window::remember(app.handle());
+            capture::prewarm(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {

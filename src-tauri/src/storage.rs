@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::Write,
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -102,6 +102,20 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .map_err(error)?;
     temp.write_all(bytes).map_err(error)?;
     temp.as_file().sync_all().map_err(error)?;
+    // Verify the staged bytes before they can become a committed generation or
+    // metadata. Stream comparison bounds memory even for a large selected PNG.
+    temp.as_file_mut().rewind().map_err(error)?;
+    let mut buffer = [0u8; 64 * 1024];
+    for expected in bytes.chunks(buffer.len()) {
+        temp.as_file_mut()
+            .read_exact(&mut buffer[..expected.len()])
+            .map_err(error)?;
+        if &buffer[..expected.len()] != expected {
+            return Err(
+                "Staged file verification failed; the previous assignment is unchanged.".into(),
+            );
+        }
+    }
     temp.persist(path).map_err(error)?;
     Ok(())
 }
@@ -275,35 +289,35 @@ impl Store {
         match slot {
             Some(id) if id > 0 && id <= self.manifest.slots.len() => Ok(id - 1),
             Some(_) => Err("Invalid slot number.".into()),
-            None => self
-                .manifest
-                .slots
-                .iter()
-                .position(Option::is_none)
-                .ok_or_else(|| "All slots are full. Select a slot and confirm replacement.".into()),
+            None => Err("Choose a destination slot.".into()),
         }
     }
 
-    pub fn validate_capture_target(
-        &self,
-        slot: Option<usize>,
-        revision: u64,
-        replace: bool,
-    ) -> Result<()> {
-        let index = self.validate_target(slot, revision)?;
-        if self.manifest.slots[index].is_some() && !replace {
-            return Err("Confirm replacement before capturing into an occupied slot.".into());
-        }
-        Ok(())
-    }
-
+    #[cfg(test)]
     pub fn assign(
         &mut self,
         slot: Option<usize>,
         revision: u64,
         image: &RgbaImage,
     ) -> Result<usize> {
+        self.assign_encoded(slot, revision, image, &export::png(image)?)
+    }
+
+    pub fn assign_encoded(
+        &mut self,
+        slot: Option<usize>,
+        revision: u64,
+        image: &RgbaImage,
+        png: &[u8],
+    ) -> Result<usize> {
         let index = self.validate_target(slot, revision)?;
+        let dimensions =
+            image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png)
+                .into_dimensions()
+                .map_err(|e| format!("Invalid capture PNG: {e}"))?;
+        if image.width() == 0 || image.height() == 0 || dimensions != image.dimensions() {
+            return Err("Capture PNG dimensions do not match the acquired region.".into());
+        }
         self.reconcile()?;
         let token = format!(
             "{}-{}-{}",
@@ -315,7 +329,7 @@ impl Store {
             NEXT.fetch_add(1, Ordering::Relaxed)
         );
         // Unique immutable generations: an interrupted write never damages the old slot.
-        atomic_write(&self.path(&token, false), &export::png(image)?)?;
+        atomic_write(&self.path(&token, false), png)?;
         let thumbnail = image::imageops::thumbnail(image, 320, 240);
         atomic_write(&self.path(&token, true), &export::png(&thumbnail)?)?;
         sync_directory(&self.root)?;
@@ -479,36 +493,21 @@ mod tests {
     }
 
     #[test]
-    fn background_target_uses_first_empty_and_full_slots_require_explicit_replacement() {
+    fn every_occupied_destination_replaces_directly_and_rejects_stale_revision() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = open(&temp);
-        store.assign(Some(1), 0, &image(1)).unwrap();
-        store.assign(Some(3), 1, &image(3)).unwrap();
-        assert_eq!(store.validate_target(None, 2).unwrap(), 1);
-        assert!(store.validate_capture_target(Some(1), 2, false).is_err());
-        assert!(store.validate_capture_target(Some(1), 2, true).is_ok());
-        for slot in [2, 4, 5] {
+        for slot in 1..=5 {
             store
-                .assign(Some(slot), store.view().revision, &image(2))
+                .assign(Some(slot), store.view().revision, &image(slot as u8))
                 .unwrap();
         }
         let revision = store.view().revision;
-        assert!(
-            store
-                .validate_capture_target(None, revision, false)
-                .unwrap_err()
-                .contains("full")
-        );
-        assert!(
-            store
-                .validate_capture_target(Some(1), revision - 1, true)
-                .is_err()
-        );
-        assert!(
-            store
-                .validate_capture_target(Some(1), revision, false)
-                .is_err()
-        );
+        let old = store.drag_files(&[3]).unwrap().remove(0);
+        assert!(store.assign(Some(3), revision - 1, &image(9)).is_err());
+        assert!(old.exists());
+        store.assign(Some(3), revision, &image(9)).unwrap();
+        assert!(!old.exists());
+        assert_eq!(store.view().slots.iter().filter(|s| s.is_some()).count(), 5);
     }
 
     #[test]
@@ -516,7 +515,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut store = open(&temp);
         store.configure(temp.path().join("exports")).unwrap();
-        store.assign(None, 0, &image(1)).unwrap();
+        store.assign(Some(1), 0, &image(1)).unwrap();
         let before = fs::read(store.root.join("manifest.json")).unwrap();
         let sources = store.drag_files(&[1]).unwrap();
         let exported = crate::export::save(&store.export_directory().unwrap(), &image(2)).unwrap();
@@ -527,10 +526,38 @@ mod tests {
     }
 
     #[test]
+    fn invalid_pending_png_cannot_replace_an_existing_image() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = open(&temp);
+        store.assign(Some(1), 0, &image(1)).unwrap();
+        let before = fs::read(store.root.join("manifest.json")).unwrap();
+        let files_before = files(&store);
+        assert!(
+            store
+                .assign_encoded(Some(1), 1, &image(2), b"not a PNG")
+                .is_err()
+        );
+        let wrong_size = export::png(&RgbaImage::new(1, 1)).unwrap();
+        assert!(
+            store
+                .assign_encoded(Some(1), 1, &image(2), &wrong_size)
+                .is_err()
+        );
+        assert_eq!(fs::read(store.root.join("manifest.json")).unwrap(), before);
+        assert_eq!(files(&store), files_before);
+        assert_eq!(
+            image::open(&store.drag_files(&[1]).unwrap()[0])
+                .unwrap()
+                .into_rgba8(),
+            image(1)
+        );
+    }
+
+    #[test]
     fn assignment_replacement_restart_and_derivative_regeneration() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = open(&temp);
-        assert_eq!(store.assign(None, 0, &image(10)).unwrap(), 1);
+        assert_eq!(store.assign(Some(1), 0, &image(10)).unwrap(), 1);
         let old = store.drag_files(&[1]).unwrap().remove(0);
         let thumb = image::load_from_memory(&store.thumbnail(1).unwrap()).unwrap();
         assert_eq!((thumb.width(), thumb.height()), (320, 240));
@@ -553,19 +580,19 @@ mod tests {
     }
 
     #[test]
-    fn automatic_assignment_fills_only_available_slots_and_rejects_stale_replacement() {
+    fn destination_is_required_and_stale_replacement_preserves_files() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = open(&temp);
         store.resize(1, 0, false).unwrap();
         assert!(store.assign(Some(0), 1, &image(1)).is_err());
         assert!(store.assign(Some(2), 1, &image(1)).is_err());
-        assert_eq!(store.assign(None, 1, &image(1)).unwrap(), 1);
+        assert_eq!(store.assign(Some(1), 1, &image(1)).unwrap(), 1);
         let source = store.drag_files(&[1]).unwrap();
         assert!(
             store
                 .assign(None, 2, &image(2))
                 .unwrap_err()
-                .contains("full")
+                .contains("Choose a destination")
         );
         assert!(store.assign(Some(1), 1, &image(2)).is_err());
         assert_eq!(store.drag_files(&[1]).unwrap(), source);
@@ -630,7 +657,7 @@ mod tests {
     fn recovery_removes_only_owned_orphans_and_interrupted_writes() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = open(&temp);
-        store.assign(None, 0, &image(1)).unwrap();
+        store.assign(Some(1), 0, &image(1)).unwrap();
         let orphan = store.path("999-1", false);
         let stage = store.root.join(".stage-interrupted");
         let unrelated = store.root.join("keep.txt");
@@ -650,7 +677,7 @@ mod tests {
     fn failed_replacement_keeps_previous_assignment_and_cleanup_failure_is_retryable() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = open(&temp);
-        store.assign(None, 0, &image(1)).unwrap();
+        store.assign(Some(1), 0, &image(1)).unwrap();
         let old = store.drag_files(&[1]).unwrap();
         // Force metadata replacement to fail without relying on root/OS permissions.
         fs::remove_file(store.root.join("manifest.json")).unwrap();
@@ -749,7 +776,7 @@ mod tests {
         use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
         let mut store = open(&temp);
-        store.assign(None, 0, &image(1)).unwrap();
+        store.assign(Some(1), 0, &image(1)).unwrap();
         let path = store.drag_files(&[1]).unwrap().remove(0);
         let outside = temp.path().join("outside.png");
         fs::write(&outside, b"private").unwrap();

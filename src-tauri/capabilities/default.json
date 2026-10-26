@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "allow-capture-region",
+    "allow-choose-capture-slot",
     "allow-slot-view",
     "allow-slot-thumbnail",
     "allow-clear-slots",
